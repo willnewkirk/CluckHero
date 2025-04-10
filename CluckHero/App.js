@@ -1,25 +1,48 @@
-import React from 'react';
-import { StatusBar } from 'expo-status-bar';
-import { NavigationContainer } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { GameProvider } from './src/context/GameContext';
-import GameScreen from './src/screens/GameScreen';
+import React, { useState } from 'react';
+import { View, StyleSheet } from 'react-native';
+import { useFonts, PressStart2P_400Regular } from '@expo-google-fonts/press-start-2p';
+import * as SplashScreen from 'expo-splash-screen';
+import GameWorld from './src/components/GameWorld';
+import OpeningSequence from './src/components/OpeningSequence';
 
-const Stack = createNativeStackNavigator();
+SplashScreen.preventAutoHideAsync();
 
 export default function App() {
+  const [showGame, setShowGame] = useState(false);
+  const [fontsLoaded] = useFonts({
+    'PressStart2P-Regular': PressStart2P_400Regular,
+  });
+
+  const onLayoutRootView = async () => {
+    if (fontsLoaded) {
+      await SplashScreen.hideAsync();
+    }
+  };
+
+  if (!fontsLoaded) {
+    return null;
+  }
+
   return (
-    <GameProvider>
-      <NavigationContainer>
-        <StatusBar style="auto" />
-        <Stack.Navigator
-          screenOptions={{
-            headerShown: false
-          }}
-        >
-          <Stack.Screen name="Game" component={GameScreen} />
-        </Stack.Navigator>
-      </NavigationContainer>
-    </GameProvider>
+    <View style={styles.container} onLayout={onLayoutRootView}>
+      {!showGame ? (
+        <OpeningSequence onComplete={() => setShowGame(true)} />
+      ) : (
+        <View style={styles.gameContainer}>
+          <GameWorld />
+        </View>
+      )}
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#222',
+  },
+  gameContainer: {
+    flex: 1,
+    backgroundColor: '#222',
+  },
+});

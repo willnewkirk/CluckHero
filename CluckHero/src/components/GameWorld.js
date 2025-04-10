@@ -13,6 +13,8 @@ const farmerBackImage = require('../../assets/farmer-back.png');
 const marketImage = require('../../assets/market.png');
 const factory1Image = require('../../assets/factory1.png');
 const factory2Image = require('../../assets/factory2.png');
+const antagonistFrontImage = require('../../assets/antagonist-front.png');
+const antagonistBackImage = require('../../assets/antagonist-back.png');
 
 const TILE_SIZE = 32; // Size of each tile in pixels
 const PLAYER_SIZE = 80; // Increased from 64 to 80 to make player even bigger
@@ -65,6 +67,20 @@ const GameWorld = () => {
   const currentTargetRef = useRef(null);
   const [factoryAnimationState, setFactoryAnimationState] = useState(1);
   const factoryAnimationRef = useRef(null);
+  // Add state for chicken dialogue
+  const [showChickenDialogue, setShowChickenDialogue] = useState(false);
+  // Add state for protagonist dialogue
+  const [showProtagonistDialogue, setShowProtagonistDialogue] = useState(false);
+  const [antagonistPosition, setAntagonistPosition] = useState({ x: 0, y: 0 });
+  const [antagonistDirection, setAntagonistDirection] = useState('front');
+  const [showAntagonist, setShowAntagonist] = useState(false);
+  const antagonistRef = useRef({ x: 0, y: 0 });
+  // Add state for antagonist dialogue
+  const [showAntagonistDialogue, setShowAntagonistDialogue] = useState(false);
+  const [antagonistReachedPlayer, setAntagonistReachedPlayer] = useState(false);
+  const [antagonistReturning, setAntagonistReturning] = useState(false);
+  // Add state for spawn lock
+  const [spawnLock, setSpawnLock] = useState(true);
 
   // Initialize the world with initial tiles centered on the player's starting position
   useEffect(() => {
@@ -101,6 +117,16 @@ const GameWorld = () => {
     };
     setFarmerPosition(initialFarmerPos);
     farmerRef.current = initialFarmerPos;
+    
+    // Initialize antagonist position at bottom of screen, moved up a bit
+    const initialAntagonistPos = {
+      x: centerX * TILE_SIZE,
+      y: (WORLD_SIZE - 3) * TILE_SIZE // Moved up 2 tiles from bottom
+    };
+    antagonistRef.current = initialAntagonistPos;
+    setAntagonistPosition(initialAntagonistPos);
+    setShowAntagonist(true);
+    setAntagonistDirection('back'); // Start facing back
     
     // Update camera to center on player
     updateCameraOffset();
@@ -765,10 +791,12 @@ const GameWorld = () => {
     }
   };
 
-  // Handle touch events - use absolute screen positions
+  // Update handleTouch to check for active dialogues
   const handleTouch = (event) => {
-    // Don't allow movement if canMove is false
-    if (!canMove) return;
+    // Don't allow movement if spawn locked or any dialogue is active
+    if (spawnLock || showFarmerDialogue || showFactoryDialogue || showChickenDialogue || showProtagonistDialogue || showAntagonistDialogue) {
+      return;
+    }
 
     // Get the raw screen coordinates where the user tapped
     const { pageX, pageY } = event.nativeEvent;
@@ -776,6 +804,20 @@ const GameWorld = () => {
     // Convert screen coordinates to world coordinates
     const worldX = pageX - cameraOffset.x;
     const worldY = pageY - cameraOffset.y;
+    
+    // Check if user tapped on the chicken circle
+    const circleRadius = 50;
+    const centerX = WORLD_SIZE * TILE_SIZE - 200;
+    const centerY = 200;
+    const distanceFromCenter = Math.sqrt(
+      Math.pow(worldX - centerX, 2) + 
+      Math.pow(worldY - centerY, 2)
+    );
+    
+    if (distanceFromCenter <= circleRadius + 20) {
+      setShowChickenDialogue(true);
+      return;
+    }
     
     // Check if user tapped on the factory
     if (!spawnPoint.current) return;
@@ -907,6 +949,21 @@ const GameWorld = () => {
         // Move to new target
         currentTargetRef.current = { x: nearMarketX, y: nearMarketY };
         moveToWithCollisionCheck(nearMarketX, nearMarketY);
+        return;
+      }
+    }
+    
+    // Check if user tapped on the antagonist
+    if (showAntagonist && !hasBetterEggs) {
+      const antagonistSize = TILE_SIZE * 3;
+      const antagonistLeft = antagonistPosition.x - antagonistSize / 2;
+      const antagonistTop = antagonistPosition.y - antagonistSize / 2;
+      const antagonistRight = antagonistLeft + antagonistSize;
+      const antagonistBottom = antagonistTop + antagonistSize;
+
+      if (worldX >= antagonistLeft && worldX <= antagonistRight &&
+          worldY >= antagonistTop && worldY <= antagonistBottom) {
+        setShowAntagonistDialogue(true);
         return;
       }
     }
@@ -1108,6 +1165,71 @@ const GameWorld = () => {
     );
   };
 
+  // Render the chicken circle group
+  const renderChickenCircle = () => {
+    const circleRadius = 50; // Radius of the circle
+    const centerX = WORLD_SIZE * TILE_SIZE - 200; // Moved further from right edge
+    const centerY = 200; // Moved further from top edge
+    const chickenSize = 24;
+    
+    // Calculate positions for 5 chickens in a circle
+    const chickenPositions = Array.from({ length: 5 }, (_, i) => {
+      const angle = (i * 2 * Math.PI / 5) - Math.PI / 2; // Offset by -90 degrees to start at top
+      return {
+        x: centerX + circleRadius * Math.cos(angle),
+        y: centerY + circleRadius * Math.sin(angle),
+        rotation: angle + Math.PI // Face inward
+      };
+    });
+    
+    return (
+      <View style={[
+        styles.chickenCircleContainer,
+        {
+          left: centerX - circleRadius - 20,
+          top: centerY - circleRadius - 20,
+          width: (circleRadius * 2) + 40,
+          height: (circleRadius * 2) + 40,
+          backgroundColor: 'transparent',
+          borderWidth: 0,
+        }
+      ]}>
+        {chickenPositions.map((pos, index) => (
+          <View
+            key={`circle-chicken-${index}`}
+            style={[
+              styles.chickenContainer,
+              {
+                left: pos.x - centerX + circleRadius + 20,
+                top: pos.y - centerY + circleRadius + 20,
+                width: chickenSize,
+                height: chickenSize,
+                transform: [{ rotate: `${pos.rotation}rad` }]
+              }
+            ]}
+          >
+            <Animated.View 
+              style={[
+                styles.chickenBody,
+                {
+                  transform: [
+                    { translateY: chickenBob }
+                  ]
+                }
+              ]}
+            >
+              <Image 
+                source={chickenImage} 
+                style={{width: chickenSize, height: chickenSize}}
+                resizeMode="contain"
+              />
+            </Animated.View>
+          </View>
+        ))}
+      </View>
+    );
+  };
+
   // Render the farmer character
   const renderFarmer = () => {
     if (!farmerPosition) return null;
@@ -1282,15 +1404,20 @@ const GameWorld = () => {
             <Text style={styles.dialogueTitle}>Factory</Text>
           </View>
           <Text style={styles.dialogueText}>
-            Welcome to the factory! Eggs are being produced automatically.
-            Each egg is worth 1 coin.
+            {isEggCounterActive 
+              ? "You've already started production!"
+              : "Welcome to the factory! Eggs are being produced automatically. Each egg is worth 1 coin."}
           </Text>
           <TouchableWithoutFeedback onPress={() => {
             setShowFactoryDialogue(false);
-            setIsEggCounterActive(true); // Start egg counter when dialogue is closed
+            if (!isEggCounterActive) {
+              setIsEggCounterActive(true); // Start egg counter when dialogue is closed
+            }
           }}>
             <View style={styles.dialogueButton}>
-              <Text style={styles.dialogueButtonText}>Start Production</Text>
+              <Text style={styles.dialogueButtonText}>
+                {isEggCounterActive ? "OK" : "Start Production"}
+              </Text>
             </View>
           </TouchableWithoutFeedback>
         </View>
@@ -1310,12 +1437,15 @@ const GameWorld = () => {
             <Text style={styles.dialogueTitle}>Farmer</Text>
           </View>
           <Text style={styles.dialogueText}>
-            Welcome to CluckHero! You must be the new hire, look a bit funny though.
-            You sure you're in the right place? Anyways... I should get to work. Let me know if you have any questions!
+            {canMove 
+              ? "Go find something to do, can't you see I'm busy?!"
+              : "Welcome to CluckHero! You must be the new hire, look a bit funny though. You sure you're in the right place? Anyways... I should get to work. Let me know if you have any questions!"}
           </Text>
           <TouchableWithoutFeedback onPress={() => {
             setShowFarmerDialogue(false);
-            setCanMove(true); // Enable movement after dialogue is closed
+            if (!canMove) {
+              setCanMove(true); // Enable movement after dialogue is closed
+            }
           }}>
             <View style={styles.dialogueButton}>
               <Text style={styles.dialogueButtonText}>OK</Text>
@@ -1352,8 +1482,27 @@ const GameWorld = () => {
     if (!isEggCounterActive) return null;
     
     return (
-      <View style={styles.eggCounterContainer}>
-        <Text style={styles.eggCounterText}>Eggs: {eggCount}</Text>
+      <View style={{
+        position: 'absolute',
+        top: 50,
+        right: 10,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        padding: 10,
+        borderRadius: 5,
+        shadowColor: '#000',
+        shadowOffset: { width: 2, height: 2 },
+        shadowOpacity: 0.5,
+        shadowRadius: 0
+      }}>
+        <Text style={{
+          color: 'white',
+          fontSize: 16,
+          fontFamily: 'PressStart2P-Regular',
+          letterSpacing: 0,
+          lineHeight: 20
+        }}>
+          Eggs: {eggCount}
+        </Text>
       </View>
     );
   };
@@ -1527,10 +1676,10 @@ const GameWorld = () => {
         <View
           style={{
             position: 'absolute',
-            width: 160, // Increased from 80 to 160 pixels
-            height: 160, // Increased from 80 to 160 pixels
-            left: FACTORY_SIZE/2 - 80, // Adjusted to center the larger hitbox
-            top: FACTORY_SIZE/2 - 80, // Adjusted to center the larger hitbox
+            width: TILE_SIZE * 16, // Increased from 8 to 16 tiles
+            height: TILE_SIZE * 16, // Increased from 8 to 16 tiles
+            left: FACTORY_SIZE/2 - (TILE_SIZE * 8), // Adjusted to center the larger hitbox
+            top: FACTORY_SIZE/2 - (TILE_SIZE * 8), // Adjusted to center the larger hitbox
             backgroundColor: 'transparent', // Make it invisible
             zIndex: 8 // Above factory image
           }}
@@ -1538,6 +1687,255 @@ const GameWorld = () => {
       </View>
     );
   };
+
+  // Add chicken dialogue component
+  const renderChickenDialogue = () => {
+    if (!showChickenDialogue) return null;
+    
+    return (
+      <View style={styles.dialogueContainer}>
+        <View style={styles.dialogueContent}>
+          <View style={styles.dialogueHeader}>
+            <Text style={styles.dialogueTitle}>Chicken</Text>
+          </View>
+          <Text style={styles.dialogueText}>
+            Gluck gluck. Gluck? GLUCK?
+          </Text>
+          <TouchableWithoutFeedback onPress={() => {
+            setShowChickenDialogue(false);
+            setShowProtagonistDialogue(true);
+          }}>
+            <View style={styles.dialogueButton}>
+              <Text style={styles.dialogueButtonText}>OK</Text>
+            </View>
+          </TouchableWithoutFeedback>
+        </View>
+      </View>
+    );
+  };
+
+  // Add protagonist dialogue component
+  const renderProtagonistDialogue = () => {
+    if (!showProtagonistDialogue) return null;
+    
+    return (
+      <View style={styles.dialogueContainer}>
+        <View style={styles.dialogueContent}>
+          <View style={styles.dialogueHeader}>
+            <Text style={styles.dialogueTitle}>You</Text>
+          </View>
+          <Text style={styles.dialogueText}>
+            I'm beginning to think this isn't just a simple clicker game...
+          </Text>
+          <TouchableWithoutFeedback onPress={() => setShowProtagonistDialogue(false)}>
+            <View style={styles.dialogueButton}>
+              <Text style={styles.dialogueButtonText}>OK</Text>
+            </View>
+          </TouchableWithoutFeedback>
+        </View>
+      </View>
+    );
+  };
+
+  const renderCoordinates = () => {
+    return (
+      <View style={{
+        position: 'absolute',
+        top: 50, // Moved down from 30 to 50
+        left: 10,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        padding: 6,
+        borderRadius: 4,
+        zIndex: 10
+      }}>
+        <Text style={{
+          color: 'white',
+          fontSize: 10,
+          fontFamily: 'PressStart2P-Regular'
+        }}>
+          X: {Math.floor(playerPosition.x)} Y: {Math.floor(playerPosition.y)}
+        </Text>
+      </View>
+    );
+  };
+
+  // Add antagonist movement effect
+  useEffect(() => {
+    if (!showAntagonist || !hasBetterEggs) return;
+
+    // Calculate center coordinates
+    const centerX = Math.floor(WORLD_SIZE / 2);
+    const centerY = Math.floor(WORLD_SIZE / 2);
+
+    const moveInterval = setInterval(() => {
+      const dx = playerPosition.x - antagonistRef.current.x;
+      const dy = playerPosition.y - antagonistRef.current.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      // If returning to spawn
+      if (antagonistReturning) {
+        const spawnDx = (centerX * TILE_SIZE) - antagonistRef.current.x;
+        const spawnDy = ((WORLD_SIZE - 3) * TILE_SIZE) - antagonistRef.current.y;
+        const spawnDistance = Math.sqrt(spawnDx * spawnDx + spawnDy * spawnDy);
+
+        if (spawnDistance > 1) {
+          const speed = 3;
+          const moveX = (spawnDx / spawnDistance) * speed;
+          const moveY = (spawnDy / spawnDistance) * speed;
+
+          antagonistRef.current = {
+            x: antagonistRef.current.x + moveX,
+            y: antagonistRef.current.y + moveY
+          };
+          setAntagonistPosition(antagonistRef.current);
+
+          // Update direction based on movement
+          if (Math.abs(spawnDx) > Math.abs(spawnDy)) {
+            setAntagonistDirection(spawnDx > 0 ? 'front' : 'back');
+          }
+        } else {
+          // Reached spawn position
+          setAntagonistReturning(false);
+        }
+        return;
+      }
+
+      // Only move if distance is greater than 4 tiles (128 pixels)
+      if (distance > TILE_SIZE * 4) {
+        const speed = 3;
+        const moveX = (dx / distance) * speed;
+        const moveY = (dy / distance) * speed;
+
+        antagonistRef.current = {
+          x: antagonistRef.current.x + moveX,
+          y: antagonistRef.current.y + moveY
+        };
+        setAntagonistPosition(antagonistRef.current);
+
+        // Update direction based on movement
+        if (Math.abs(dx) > Math.abs(dy)) {
+          setAntagonistDirection(dx > 0 ? 'front' : 'back');
+        }
+      } else if (!antagonistReachedPlayer) {
+        // Reached player for the first time
+        setAntagonistReachedPlayer(true);
+        setShowAntagonistDialogue(true);
+      }
+    }, 16); // ~60fps
+
+    return () => clearInterval(moveInterval);
+  }, [showAntagonist, playerPosition, hasBetterEggs, antagonistReachedPlayer, antagonistReturning]);
+
+  // Update market purchase handler
+  const handleMarketPurchase = (item) => {
+    if (eggCount < item.price) return;
+
+    setEggCount(prev => prev - item.price);
+    
+    switch (item.name) {
+      case 'Speed Boost':
+        setHasSpeedBoost(true);
+        setMoveSpeed(prev => prev * 1.2);
+        break;
+      case 'Chicken Feed':
+        setHasChickenFeed(true);
+        setEggProductionRate(prev => prev + 1);
+        break;
+      case 'Better Eggs':
+        setHasBetterEggs(true);
+        // Antagonist will now start following the player
+        break;
+    }
+  };
+
+  // Add antagonist rendering
+  const renderAntagonist = () => {
+    if (!showAntagonist) return null;
+
+    return (
+      <View
+        style={{
+          position: 'absolute',
+          left: antagonistPosition.x - TILE_SIZE * 1.5, // Centered with larger size
+          top: antagonistPosition.y - TILE_SIZE * 1.5, // Centered with larger size
+          width: TILE_SIZE * 3, // Increased size to 3x3 tiles
+          height: TILE_SIZE * 3, // Increased size to 3x3 tiles
+          zIndex: 6,
+          backgroundColor: 'transparent'
+        }}
+      >
+        <Image
+          source={antagonistDirection === 'front' ? antagonistFrontImage : antagonistBackImage}
+          style={{
+            width: '100%',
+            height: '100%',
+            resizeMode: 'contain'
+          }}
+        />
+      </View>
+    );
+  };
+
+  // Update market items with new prices
+  const marketItems = [
+    {
+      name: 'Speed Boost',
+      description: 'Move 20% faster',
+      price: 25,
+      icon: '🏃'
+    },
+    {
+      name: 'Chicken Feed',
+      description: 'Increase egg production by 1 per second',
+      price: 25,
+      icon: '🌾'
+    },
+    {
+      name: 'Better Eggs',
+      description: 'Add 2 eggs per second',
+      price: 25,
+      icon: '🥚'
+    }
+  ];
+
+  // Add antagonist dialogue component
+  const renderAntagonistDialogue = () => {
+    if (!showAntagonistDialogue) return null;
+    
+    return (
+      <View style={styles.dialogueContainer}>
+        <View style={styles.dialogueContent}>
+          <View style={styles.dialogueHeader}>
+            <Text style={styles.dialogueTitle}>???</Text>
+          </View>
+          <Text style={styles.dialogueText}>
+            {antagonistReachedPlayer 
+              ? "You must be the new kid... you've got a lot to learn about this place."
+              : "Patience...patience..."}
+          </Text>
+          <TouchableWithoutFeedback onPress={() => {
+            setShowAntagonistDialogue(false);
+            if (antagonistReachedPlayer) {
+              setAntagonistReturning(true);
+            }
+          }}>
+            <View style={styles.dialogueButton}>
+              <Text style={styles.dialogueButtonText}>OK</Text>
+            </View>
+          </TouchableWithoutFeedback>
+        </View>
+      </View>
+    );
+  };
+
+  // Add spawn lock timer effect
+  useEffect(() => {
+    const spawnTimer = setTimeout(() => {
+      setSpawnLock(false);
+    }, 5000); // 5 seconds
+
+    return () => clearTimeout(spawnTimer);
+  }, []);
 
   return (
     <TouchableWithoutFeedback onPress={handleTouch}>
@@ -1569,18 +1967,23 @@ const GameWorld = () => {
           {/* Render chicken companion */}
           {renderChicken()}
           
+          {/* Render chicken circle group */}
+          {renderChickenCircle()}
+          
           {/* Render farmer */}
           {renderFarmer()}
           
           {/* Render market building */}
           {renderMarket()}
           
+          {/* Render antagonist */}
+          {renderAntagonist()}
+          
           {/* Render player (only once) */}
           {renderPlayer()}
         </View>
         {/* Still call renderTapMarker() to maintain code structure */}
         {renderTapMarker()}
-        {renderDebugInfo()}
         
         {/* Market room UI overlay */}
         {renderMarketRoom()}
@@ -1591,8 +1994,18 @@ const GameWorld = () => {
         {/* Factory dialogue */}
         {renderFactoryDialogue()}
         
+        {/* Chicken dialogue */}
+        {renderChickenDialogue()}
+        
+        {/* Protagonist dialogue */}
+        {renderProtagonistDialogue()}
+        
+        {/* Antagonist dialogue */}
+        {renderAntagonistDialogue()}
+        
         {/* Egg counter */}
         {renderEggCounter()}
+        {renderCoordinates()}
       </View>
     </TouchableWithoutFeedback>
   );
@@ -1676,7 +2089,8 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: 'bold',
     color: '#8B4513',
-    textAlign: 'center'
+    textAlign: 'center',
+    fontFamily: 'PressStart2P-Regular'
   },
   // Shopkeeper styles
   shopkeeper: {
@@ -1756,7 +2170,10 @@ const styles = StyleSheet.create({
   },
   debugText: {
     color: 'white',
-    fontSize: 12
+    fontSize: 12,
+    fontFamily: 'PressStart2P-Regular', // Pixelated font
+    letterSpacing: 0,
+    lineHeight: 16
   },
   shadowOverlay: {
     position: 'absolute',
@@ -1808,11 +2225,12 @@ const styles = StyleSheet.create({
     borderColor: '#FFD700'
   },
   marketRoomTitle: {
-    fontSize: 20,
+    fontSize: 16, // Reduced from 20
     fontWeight: 'bold',
     color: '#FFD700',
     textAlign: 'center',
-    marginBottom: 20
+    marginBottom: 20,
+    fontFamily: 'PressStart2P-Regular'
   },
   marketItems: {
     marginVertical: 10
@@ -1838,7 +2256,9 @@ const styles = StyleSheet.create({
   marketItemText: {
     flex: 1,
     color: 'white',
-    fontWeight: 'bold'
+    fontWeight: 'bold',
+    fontFamily: 'PressStart2P-Regular',
+    fontSize: 10 // Reduced from 12
   },
   marketItemPrice: {
     padding: 5,
@@ -1848,7 +2268,9 @@ const styles = StyleSheet.create({
   },
   marketItemPriceText: {
     color: 'white',
-    fontWeight: 'bold'
+    fontWeight: 'bold',
+    fontFamily: 'PressStart2P-Regular',
+    fontSize: 10 // Reduced from 12
   },
   marketCloseButton: {
     backgroundColor: '#D2B48C',
@@ -1859,7 +2281,9 @@ const styles = StyleSheet.create({
   },
   marketCloseText: {
     color: '#8B4513',
-    fontWeight: 'bold'
+    fontWeight: 'bold',
+    fontFamily: 'PressStart2P-Regular',
+    fontSize: 10 // Reduced from 12
   },
   worldBorderContainer: {
     position: 'absolute',
@@ -1950,13 +2374,15 @@ const styles = StyleSheet.create({
   dialogueTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#6A9EEC', // Pokemon blue
+    color: '#6A9EEC',
+    fontFamily: 'PressStart2P-Regular'
   },
   dialogueText: {
     color: 'white',
     fontSize: 16,
     marginBottom: 10,
-    lineHeight: 22
+    lineHeight: 22,
+    fontFamily: 'PressStart2P-Regular'
   },
   dialogueButton: {
     alignSelf: 'flex-end',
@@ -1964,9 +2390,10 @@ const styles = StyleSheet.create({
     padding: 5
   },
   dialogueButtonText: {
-    color: '#6A9EEC', // Pokemon blue
+    color: '#6A9EEC',
     fontSize: 16,
-    fontWeight: 'bold'
+    fontWeight: 'bold',
+    fontFamily: 'PressStart2P-Regular'
   },
   pathSegment: {
     position: 'absolute',
@@ -1974,18 +2401,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(0,0,0,0.2)',
   },
-  eggCounterContainer: {
+  chickenCircleContainer: {
     position: 'absolute',
-    top: 50, // Moved down from 30 to 50
-    right: 10,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    padding: 5,
-    borderRadius: 5,
-  },
-  eggCounterText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold'
+    zIndex: 5,
   },
 });
 
