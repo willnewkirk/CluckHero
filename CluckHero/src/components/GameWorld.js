@@ -81,6 +81,10 @@ const GameWorld = () => {
   const [antagonistReturning, setAntagonistReturning] = useState(false);
   // Add state for spawn lock
   const [spawnLock, setSpawnLock] = useState(true);
+  // Add new state variables for the sequence
+  const [showSelfDialogue, setShowSelfDialogue] = useState(false);
+  const [showChapterText, setShowChapterText] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
 
   // Initialize the world with initial tiles centered on the player's starting position
   useEffect(() => {
@@ -1917,6 +1921,10 @@ const GameWorld = () => {
             setShowAntagonistDialogue(false);
             if (antagonistReachedPlayer) {
               setAntagonistReturning(true);
+              // Start the sequence after antagonist starts returning
+              setTimeout(() => {
+                setShowSelfDialogue(true);
+              }, 2000);
             }
           }}>
             <View style={styles.dialogueButton}>
@@ -1925,6 +1933,67 @@ const GameWorld = () => {
           </TouchableWithoutFeedback>
         </View>
       </View>
+    );
+  };
+
+  // Add self dialogue component
+  const renderSelfDialogue = () => {
+    if (!showSelfDialogue) return null;
+    
+    return (
+      <View style={styles.dialogueContainer}>
+        <View style={styles.dialogueContent}>
+          <View style={styles.dialogueHeader}>
+            <Text style={styles.dialogueTitle}>You</Text>
+          </View>
+          <Text style={styles.dialogueText}>
+            What is this place???
+          </Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
+            <TouchableWithoutFeedback onPress={() => setShowSelfDialogue(false)}>
+              <View style={styles.dialogueButton}>
+                <Text style={styles.dialogueButtonText}>OK</Text>
+              </View>
+            </TouchableWithoutFeedback>
+            <TouchableWithoutFeedback onPress={() => {
+              setShowSelfDialogue(false);
+              // Start fade to black
+              Animated.timing(fadeAnim, {
+                toValue: 1,
+                duration: 2000,
+                useNativeDriver: true
+              }).start(() => {
+                // Show chapter text after fade completes
+                setTimeout(() => {
+                  setShowChapterText(true);
+                }, 1000);
+              });
+            }}>
+              <View style={styles.dialogueButton}>
+                <Text style={styles.dialogueButtonText}>...</Text>
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </View>
+      </View>
+    );
+  };
+
+  // Add fade overlay and chapter text
+  const renderFadeAndChapter = () => {
+    if (fadeAnim._value === 0 && !showChapterText) return null;
+
+    return (
+      <Animated.View style={[
+        styles.fadeOverlay,
+        { opacity: fadeAnim }
+      ]}>
+        {showChapterText && (
+          <Text style={styles.chapterText}>
+            CHAPTER 2
+          </Text>
+        )}
+      </Animated.View>
     );
   };
 
@@ -2006,6 +2075,12 @@ const GameWorld = () => {
         {/* Egg counter */}
         {renderEggCounter()}
         {renderCoordinates()}
+        
+        {/* Self dialogue */}
+        {renderSelfDialogue()}
+        
+        {/* Fade overlay and chapter text */}
+        {renderFadeAndChapter()}
       </View>
     </TouchableWithoutFeedback>
   );
@@ -2405,6 +2480,23 @@ const styles = StyleSheet.create({
     position: 'absolute',
     zIndex: 5,
   },
+  fadeOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'black',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 200
+  },
+  chapterText: {
+    color: 'white',
+    fontSize: 32,
+    fontFamily: 'PressStart2P-Regular',
+    textAlign: 'center'
+  }
 });
 
 export default GameWorld; 
