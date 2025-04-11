@@ -48,7 +48,7 @@ const GameWorld = () => {
   const [hasChickenFeed, setHasChickenFeed] = useState(false);
   const [hasBetterEggs, setHasBetterEggs] = useState(false);
   const [eggProductionRate, setEggProductionRate] = useState(1);
-  const [moveSpeed, setMoveSpeed] = useState(400); // Convert MOVE_SPEED to state variable
+  const [moveSpeed, setMoveSpeed] = useState(200); // Base movement speed
   const [canMove, setCanMove] = useState(false); // New state to control player movement
   const screenDimensions = useRef(Dimensions.get('window'));
   const playerRef = useRef({ x: 0, y: 0 }); // Reference to track current player position
@@ -599,7 +599,7 @@ const GameWorld = () => {
       }
 
       const distance = Math.sqrt(dx * dx + dy * dy);
-      const duration = (distance / moveSpeed) * 1000; // Use base MOVE_SPEED without multiplier
+      const duration = (distance / moveSpeed) * 1000; // Convert to milliseconds
       
       // Calculate the movement increment per frame
       const steps = duration / 16; // Approximately 60fps
@@ -1839,7 +1839,7 @@ const GameWorld = () => {
     switch (item.name) {
       case 'Speed Boost':
         setHasSpeedBoost(true);
-        setMoveSpeed(prev => prev * 1.2);
+        setMoveSpeed(prev => prev * 1.2); // Increase speed by 20%
         break;
       case 'Chicken Feed':
         setHasChickenFeed(true);
@@ -1949,31 +1949,27 @@ const GameWorld = () => {
           <Text style={styles.dialogueText}>
             What is this place???
           </Text>
-          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
-            <TouchableWithoutFeedback onPress={() => setShowSelfDialogue(false)}>
-              <View style={styles.dialogueButton}>
-                <Text style={styles.dialogueButtonText}>OK</Text>
-              </View>
-            </TouchableWithoutFeedback>
-            <TouchableWithoutFeedback onPress={() => {
-              setShowSelfDialogue(false);
-              // Start fade to black
-              Animated.timing(fadeAnim, {
-                toValue: 1,
-                duration: 2000,
-                useNativeDriver: true
-              }).start(() => {
-                // Show chapter text after fade completes
-                setTimeout(() => {
-                  setShowChapterText(true);
-                }, 1000);
-              });
-            }}>
-              <View style={styles.dialogueButton}>
-                <Text style={styles.dialogueButtonText}>...</Text>
-              </View>
-            </TouchableWithoutFeedback>
-          </View>
+          <TouchableWithoutFeedback onPress={() => {
+            setShowSelfDialogue(false);
+            // Reset fadeAnim to ensure we start from fully transparent
+            fadeAnim.setValue(0);
+            // Start fade to black with easing
+            Animated.timing(fadeAnim, {
+              toValue: 1,
+              duration: 3000, // Increased to 3 seconds for more noticeable fade
+              useNativeDriver: true,
+              easing: Easing.inOut(Easing.ease) // Add easing for smoother transition
+            }).start(() => {
+              // Show chapter text after fade completes
+              setTimeout(() => {
+                setShowChapterText(true);
+              }, 1000);
+            });
+          }}>
+            <View style={styles.dialogueButton}>
+              <Text style={styles.dialogueButtonText}>OK</Text>
+            </View>
+          </TouchableWithoutFeedback>
         </View>
       </View>
     );
@@ -1981,17 +1977,25 @@ const GameWorld = () => {
 
   // Add fade overlay and chapter text
   const renderFadeAndChapter = () => {
-    if (fadeAnim._value === 0 && !showChapterText) return null;
-
     return (
       <Animated.View style={[
         styles.fadeOverlay,
-        { opacity: fadeAnim }
+        {
+          opacity: fadeAnim,
+          // Make sure it's always on top
+          zIndex: 1000,
+          elevation: 1000,
+        }
       ]}>
         {showChapterText && (
-          <Text style={styles.chapterText}>
-            CHAPTER 2
-          </Text>
+          <View style={styles.chapterContainer}>
+            <Text style={styles.chapterText}>
+              CHAPTER 2
+            </Text>
+            <Text style={styles.chapterSubtitle}>
+              Pecking Order
+            </Text>
+          </View>
         )}
       </Animated.View>
     );
@@ -2489,13 +2493,24 @@ const styles = StyleSheet.create({
     backgroundColor: 'black',
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 200
+    // Remove any opacity here since we're controlling it with animation
+  },
+  chapterContainer: {
+    alignItems: 'center',
   },
   chapterText: {
     color: 'white',
     fontSize: 32,
     fontFamily: 'PressStart2P-Regular',
-    textAlign: 'center'
+    textAlign: 'center',
+    marginBottom: 20
+  },
+  chapterSubtitle: {
+    color: 'white',
+    fontSize: 24,
+    fontFamily: 'PressStart2P-Regular',
+    textAlign: 'center',
+    opacity: 0.8
   }
 });
 
