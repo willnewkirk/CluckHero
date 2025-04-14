@@ -15,9 +15,13 @@
     "@react-navigation/stack": "^7.2.10",
     "expo": "^52.0.44",
     "expo-av": "^15.0.2",
+    "expo-splash-screen": "~0.26.4",
     "expo-status-bar": "~1.11.1",
+    "expo-updates": "~0.24.9",
     "react": "18.2.0",
     "react-native": "0.73.2",
+    "react-native-gesture-handler": "~2.14.0",
+    "react-native-reanimated": "~3.6.2",
     "react-native-safe-area-context": "^5.3.0",
     "react-native-screens": "^4.10.0"
   },
