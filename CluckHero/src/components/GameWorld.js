@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, StyleSheet, Dimensions, Animated, Text, TouchableWithoutFeedback, Image, Easing } from 'react-native';
 import { GameContext } from '../context/GameContext';
+import { Audio } from 'expo-av';
+import { useNavigation } from '@react-navigation/native';
 
 // Import images directly - try multiple approaches to ensure one works
 const playerFrontImage = require('../../assets/player-front.png');
@@ -13,15 +15,23 @@ const farmerBackImage = require('../../assets/farmer-back.png');
 const marketImage = require('../../assets/market.png');
 const factory1Image = require('../../assets/factory1.png');
 const factory2Image = require('../../assets/factory2.png');
+const factory3Image = require('../../assets/factory3.png');
 const antagonistFrontImage = require('../../assets/antagonist-front.png');
 const antagonistBackImage = require('../../assets/antagonist-back.png');
+const torch0Image = require('../../assets/torch-0.png');
+const torch1Image = require('../../assets/torch-1.png');
+const torch2Image = require('../../assets/torch-2.png');
+
+// Import audio file
+const chapter1Music = require('../../assets/chapter-1.mp3');
 
 const TILE_SIZE = 32; // Size of each tile in pixels
 const PLAYER_SIZE = 80; // Increased from 64 to 80 to make player even bigger
 const WORLD_SIZE = 50; // Number of tiles in each direction
 const FACTORY_SIZE = TILE_SIZE * 16; // Make factory 16x16 tiles (smaller than before)
 
-const GameWorld = () => {
+const GameWorld = ({ chapter = 1, sound: chapter2Sound, isMusicPlaying: chapter2MusicPlaying }) => {
+  const navigation = useNavigation();
   const [playerPosition, setPlayerPosition] = useState({
     x: WORLD_SIZE * TILE_SIZE / 2,
     y: WORLD_SIZE * TILE_SIZE / 2
@@ -42,6 +52,8 @@ const GameWorld = () => {
   const [isFarmerWalking, setIsFarmerWalking] = useState(false); // Farmer walking state
   const [showFarmerDialogue, setShowFarmerDialogue] = useState(false); // Show farmer greeting
   const [showFactoryDialogue, setShowFactoryDialogue] = useState(false);
+  const [isInFactory, setIsInFactory] = useState(false);
+  const [factoryInteriorTiles, setFactoryInteriorTiles] = useState({});
   const [eggCount, setEggCount] = useState(0);
   const [isEggCounterActive, setIsEggCounterActive] = useState(false);
   const [hasSpeedBoost, setHasSpeedBoost] = useState(false);
@@ -85,6 +97,29 @@ const GameWorld = () => {
   const [showSelfDialogue, setShowSelfDialogue] = useState(false);
   const [showChapterText, setShowChapterText] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const [sound, setSound] = useState(null);
+  const [isMusicPlaying, setIsMusicPlaying] = useState(false);
+  // Add new state for explore alert
+  const [showExploreAlert, setShowExploreAlert] = useState(false);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const [hasPlayerApproachedFarmer, setHasPlayerApproachedFarmer] = useState(false);
+  // Add new state variables for thunderstorm
+  const [lightningFlash, setLightningFlash] = useState(false);
+  const [rainOpacity, setRainOpacity] = useState(0.5);
+  // Add state for rain animation
+  const rainAnim = useRef(new Animated.Value(0)).current;
+  const rainAnimationRef = useRef(null);
+  const bloodSpatterPositions = useRef(null);
+  // Add new state for newspaper dialogue
+  const [showNewspaperDialogue, setShowNewspaperDialogue] = useState(false);
+  const [franticChickenPos, setFranticChickenPos] = useState({ x: 0, y: 0 });
+  const franticChickenRef = useRef({ x: 0, y: 0 });
+  const franticChickenTimer = useRef(null);
+  // Add state for rain animation
+  const rainDrops = useRef(null);
+  // Add state for torch animation
+  const [torchFrame, setTorchFrame] = useState(0);
+  const torchAnimationRef = useRef(null);
 
   // Initialize the world with initial tiles centered on the player's starting position
   useEffect(() => {
@@ -122,15 +157,23 @@ const GameWorld = () => {
     setFarmerPosition(initialFarmerPos);
     farmerRef.current = initialFarmerPos;
     
-    // Initialize antagonist position at bottom of screen, moved up a bit
-    const initialAntagonistPos = {
-      x: centerX * TILE_SIZE,
-      y: (WORLD_SIZE - 3) * TILE_SIZE // Moved up 2 tiles from bottom
-    };
-    antagonistRef.current = initialAntagonistPos;
-    setAntagonistPosition(initialAntagonistPos);
-    setShowAntagonist(true);
-    setAntagonistDirection('back'); // Start facing back
+    // Only initialize antagonist in Chapter 1
+    if (chapter === 1) {
+      // Initialize antagonist position at bottom of screen, moved up a bit
+      const initialAntagonistPos = {
+        x: centerX * TILE_SIZE,
+        y: (WORLD_SIZE - 3) * TILE_SIZE // Moved up 2 tiles from bottom
+      };
+      antagonistRef.current = initialAntagonistPos;
+      setAntagonistPosition(initialAntagonistPos);
+      setShowAntagonist(true);
+      setAntagonistDirection('back'); // Start facing back
+    } else {
+      // In Chapter 2, give player 10 eggs and enable movement immediately
+      setEggCount(10);
+      setCanMove(true);
+      setSpawnLock(false);
+    }
     
     // Update camera to center on player
     updateCameraOffset();
@@ -143,13 +186,20 @@ const GameWorld = () => {
     setVisitedTiles(allVisitedTiles);
     setTiles(allTiles);
     
-    // Start the farmer greeting sequence after a short delay
-    setTimeout(() => {
-      if (!hasFarmerGreeted.current) {
-        startFarmerGreeting();
-      }
-    }, 1000);
-  }, []);
+    // Only show farmer dialogue in Chapter 1
+    if (chapter === 1) {
+      // Start the farmer greeting sequence after a short delay
+      setTimeout(() => {
+        if (!hasFarmerGreeted.current) {
+          startFarmerGreeting();
+        }
+      }, 2000);
+    } else {
+      // In Chapter 2, enable movement immediately and ensure no spawn lock
+      setCanMove(true);
+      setSpawnLock(false);
+    }
+  }, [chapter]);
 
   // Animate walking frames
   useEffect(() => {
@@ -276,7 +326,7 @@ const GameWorld = () => {
     const allTiles = {};
     const specialX = 295;
     const specialY = 887;
-    const specialRadius = 5;
+    const specialRadius = 5 * 1.3; // Increased by 1.3 times
     const spawnRadius = 5;
     const pathWidth = 3;
     
@@ -508,70 +558,68 @@ const GameWorld = () => {
 
   // Helper function to move with collision detection
   const moveToWithCollisionCheck = (targetX, targetY) => {
-    // Check world boundaries
-    const worldBorderPadding = TILE_SIZE / 2;
-    const minX = worldBorderPadding;
-    const minY = worldBorderPadding;
-    const maxX = WORLD_SIZE * TILE_SIZE - worldBorderPadding;
-    const maxY = WORLD_SIZE * TILE_SIZE - worldBorderPadding;
+    if (isInFactory) {
+      // Check factory interior boundaries
+      const minX = TILE_SIZE; // One tile in from the left border
+      const minY = TILE_SIZE; // One tile in from the top border
+      const maxX = 19 * TILE_SIZE - TILE_SIZE; // One tile in from the right border
+      const maxY = 19 * TILE_SIZE - TILE_SIZE; // One tile in from the bottom border
 
-    // Clamp target position to world boundaries
-    const clampedTargetX = Math.max(minX, Math.min(maxX, targetX));
-    const clampedTargetY = Math.max(minY, Math.min(maxY, targetY));
+      // Clamp target position to factory boundaries
+      const clampedTargetX = Math.max(minX, Math.min(maxX, targetX));
+      const clampedTargetY = Math.max(minY, Math.min(maxY, targetY));
 
-    // If target was clamped, show a visual indicator that we hit the border
-    if (clampedTargetX !== targetX || clampedTargetY !== targetY) {
-      console.log("Hit world border!");
-    }
-    
-    // Get market boundaries for interaction check - updated for the new image size
-    const { x: marketX, y: marketY } = spawnPoint.current;
-    const marketSize = TILE_SIZE * 3; // 3x3 tiles to match the image size
-    const marketLeft = marketX * TILE_SIZE - TILE_SIZE;
-    const marketTop = (marketY * TILE_SIZE) - TILE_SIZE * 3.5;
-    const marketRight = marketLeft + marketSize;
-    const marketBottom = marketTop + marketSize;
-    
-    // Check if the target position is inside the market
-    const isTargetInsideMarket = (
-      clampedTargetX >= marketLeft && 
-      clampedTargetX <= marketRight && 
-      clampedTargetY >= marketTop && 
-      clampedTargetY <= marketBottom
-    );
-    
-    // If target is inside market, don't allow movement there
-    if (isTargetInsideMarket) {
-      console.log("Can't walk through market!");
-      return; // Cancel movement
-    }
-    
-    // Calculate if the straight-line path would cross the market
-    // Use expanded market boundaries to prevent cutting corners
-    const willCrossMarket = doesLineIntersectRect(
-      playerRef.current.x, playerRef.current.y,
-      clampedTargetX, clampedTargetY,
-      marketLeft, marketTop, marketRight, marketBottom
-    );
-    
-    if (willCrossMarket) {
-      // Find an alternative path around the market
-      const alternativePath = findPathAroundMarket(clampedTargetX, clampedTargetY);
-      if (alternativePath) {
-        // Move to the waypoint first
-        startMovement(alternativePath.x, alternativePath.y);
-      } else {
-        // Can't find a path, don't move
-        console.log("Can't find path around market!");
-        return;
+      // If target was clamped, show a visual indicator that we hit the border
+      if (clampedTargetX !== targetX || clampedTargetY !== targetY) {
+        console.log("Hit factory border!");
       }
+
+      // Always proceed with movement, even if hitting the border
+      startMovement(clampedTargetX, clampedTargetY);
     } else {
-      // Direct path doesn't cross market, proceed normally
+      // Original world boundary checks
+      const worldBorderPadding = TILE_SIZE / 2;
+      const minX = worldBorderPadding;
+      const minY = worldBorderPadding;
+      const maxX = WORLD_SIZE * TILE_SIZE - worldBorderPadding;
+      const maxY = WORLD_SIZE * TILE_SIZE - worldBorderPadding;
+
+      // Clamp target position to world boundaries
+      const clampedTargetX = Math.max(minX, Math.min(maxX, targetX));
+      const clampedTargetY = Math.max(minY, Math.min(maxY, targetY));
+
+      // If target was clamped, show a visual indicator that we hit the border
+      if (clampedTargetX !== targetX || clampedTargetY !== targetY) {
+        console.log("Hit world border!");
+      }
+
+      // Get factory boundaries for collision check
+      if (spawnPoint.current) {
+        const { x, y } = spawnPoint.current;
+        const factoryX = x * TILE_SIZE - FACTORY_SIZE * 1.5 - TILE_SIZE * 2;
+        const factoryY = y * TILE_SIZE - FACTORY_SIZE / 2 - TILE_SIZE;
+        
+        // Check if the target position is inside the factory
+        const isTargetInsideFactory = (
+          clampedTargetX >= factoryX && 
+          clampedTargetX <= factoryX + FACTORY_SIZE && 
+          clampedTargetY >= factoryY && 
+          clampedTargetY <= factoryY + FACTORY_SIZE
+        );
+        
+        // If target is inside factory, show dialogue instead of moving
+        if (isTargetInsideFactory) {
+          setShowFactoryDialogue(true);
+          return; // Cancel movement and show dialogue
+        }
+      }
+      
+      // Always proceed with movement, even if hitting the border
       startMovement(clampedTargetX, clampedTargetY);
     }
   };
 
-  // Start the actual movement animation
+  // Optimize movement handling
   const startMovement = (targetX, targetY) => {
     // Store the new target
     currentTargetRef.current = { x: targetX, y: targetY };
@@ -582,7 +630,6 @@ const GameWorld = () => {
     
     // Small delay to ensure state is reset
     setTimeout(() => {
-      console.log('Starting movement to:', targetX, targetY);
       isMoving.current = true;
       setIsWalking(true);
 
@@ -591,34 +638,30 @@ const GameWorld = () => {
       const dy = targetY - playerRef.current.y;
       
       if (Math.abs(dx) > Math.abs(dy)) {
-        // Horizontal movement is greater
         setPlayerDirection(dx > 0 ? 'right' : 'left');
       } else {
-        // Vertical movement is greater
         setPlayerDirection(dy > 0 ? 'down' : 'up');
       }
 
       const distance = Math.sqrt(dx * dx + dy * dy);
-      const duration = (distance / moveSpeed) * 1000; // Use base MOVE_SPEED without multiplier
+      const duration = (distance / moveSpeed) * 1000;
       
       // Calculate the movement increment per frame
-      const steps = duration / 16; // Approximately 60fps
+      const steps = Math.max(5, Math.floor(duration / 16)); // Reduced steps for better performance
       const incrementX = dx / steps;
       const incrementY = dy / steps;
+
+      // Define world boundaries
+      const worldBorderPadding = TILE_SIZE / 2;
+      const minX = worldBorderPadding;
+      const minY = worldBorderPadding;
+      const maxX = WORLD_SIZE * TILE_SIZE - worldBorderPadding;
+      const maxY = WORLD_SIZE * TILE_SIZE - worldBorderPadding;
       
       // Start animation loop
       let step = 0;
       const moveStep = () => {
-        if (!isMoving.current) return; // Stop if movement was cancelled
-        
-        // Check if we have a new target
-        if (currentTargetRef.current && 
-            (currentTargetRef.current.x !== targetX || currentTargetRef.current.y !== targetY)) {
-          // New target detected, restart movement
-          isMoving.current = false;
-          moveToWithCollisionCheck(currentTargetRef.current.x, currentTargetRef.current.y);
-          return;
-        }
+        if (!isMoving.current) return;
         
         if (step >= steps) {
           // Animation complete
@@ -627,17 +670,7 @@ const GameWorld = () => {
           updateCameraOffset();
           isMoving.current = false;
           setIsWalking(false);
-          // Clear the tap marker when destination is reached
           setTapMarker(null);
-          
-          // Mark the target tile as visited
-          const tileX = Math.floor(targetX / TILE_SIZE);
-          const tileY = Math.floor(targetY / TILE_SIZE);
-          const tileKey = `${tileX}-${tileY}`;
-          if (!visitedTiles.has(tileKey)) {
-            setVisitedTiles(prev => new Set([...prev, tileKey]));
-          }
-          
           return;
         }
         
@@ -646,13 +679,6 @@ const GameWorld = () => {
         const newY = playerRef.current.y + incrementY;
         
         // Check world boundaries during movement
-        const worldBorderPadding = TILE_SIZE / 2;
-        const minX = worldBorderPadding;
-        const minY = worldBorderPadding;
-        const maxX = WORLD_SIZE * TILE_SIZE - worldBorderPadding;
-        const maxY = WORLD_SIZE * TILE_SIZE - worldBorderPadding;
-        
-        // Clamp position to world boundaries
         playerRef.current = {
           x: Math.max(minX, Math.min(maxX, newX)),
           y: Math.max(minY, Math.min(maxY, newY))
@@ -660,17 +686,7 @@ const GameWorld = () => {
         
         // Update state to trigger re-render
         setPlayerPosition({ ...playerRef.current });
-        
         updateCameraOffset();
-        
-        // Check for tiles to mark as visited during movement
-        const currentTileX = Math.floor(playerRef.current.x / TILE_SIZE);
-        const currentTileY = Math.floor(playerRef.current.y / TILE_SIZE);
-        const currentTileKey = `${currentTileX}-${currentTileY}`;
-        
-        if (!visitedTiles.has(currentTileKey)) {
-          setVisitedTiles(prev => new Set([...prev, currentTileKey]));
-        }
         
         step++;
         requestAnimationFrame(moveStep);
@@ -795,7 +811,7 @@ const GameWorld = () => {
     }
   };
 
-  // Update handleTouch to check for active dialogues
+  // Update handleTouch to handle factory doorway interaction
   const handleTouch = (event) => {
     // Don't allow movement if spawn locked or any dialogue is active
     if (spawnLock || showFarmerDialogue || showFactoryDialogue || showChickenDialogue || showProtagonistDialogue || showAntagonistDialogue) {
@@ -808,6 +824,29 @@ const GameWorld = () => {
     // Convert screen coordinates to world coordinates
     const worldX = pageX - cameraOffset.x;
     const worldY = pageY - cameraOffset.y;
+
+    // Check if user tapped on the factory doorway when inside factory
+    if (isInFactory) {
+      const doorX = 0;
+      const doorY = 9 * TILE_SIZE; // Center of the doorway
+      const doorWidth = TILE_SIZE;
+      const doorHeight = TILE_SIZE * 3; // 3 tiles tall doorway
+      
+      if (worldX >= doorX - doorWidth/2 && worldX <= doorX + doorWidth/2 &&
+          worldY >= doorY - doorHeight/2 && worldY <= doorY + doorHeight/2) {
+        // Exit factory and return to spawn point
+        setIsInFactory(false);
+        if (spawnPoint.current) {
+          const { x, y } = spawnPoint.current;
+          const spawnX = x * TILE_SIZE;
+          const spawnY = y * TILE_SIZE;
+          setPlayerPosition({ x: spawnX, y: spawnY });
+          playerRef.current = { x: spawnX, y: spawnY };
+          updateCameraOffset();
+        }
+        return;
+      }
+    }
     
     // Check if user tapped on the chicken circle
     const circleRadius = 50;
@@ -823,19 +862,19 @@ const GameWorld = () => {
       return;
     }
     
-    // Check if user tapped on the factory
+    // Check if user tapped on the factory - now with much larger hitbox
     if (!spawnPoint.current) return;
     
     const { x, y } = spawnPoint.current;
-    const factoryX = x * TILE_SIZE - FACTORY_SIZE * 1.5;
-    const factoryY = y * TILE_SIZE - FACTORY_SIZE / 2;
+    const factoryX = x * TILE_SIZE - FACTORY_SIZE * 1.5 - TILE_SIZE * 2;
+    const factoryY = y * TILE_SIZE - FACTORY_SIZE / 2 - TILE_SIZE;
     
     // Calculate the center of the factory
     const factoryCenterX = factoryX + FACTORY_SIZE/2;
     const factoryCenterY = factoryY + FACTORY_SIZE/2;
     
-    // Create a 40x40 pixel hitbox around the center
-    const hitboxSize = 40;
+    // Create a much larger hitbox around the factory (200x200 pixels)
+    const hitboxSize = 200;
     const isTapOnFactory = (
       worldX >= factoryCenterX - hitboxSize/2 && 
       worldX <= factoryCenterX + hitboxSize/2 && 
@@ -843,30 +882,9 @@ const GameWorld = () => {
       worldY <= factoryCenterY + hitboxSize/2
     );
     
-    // Check if player is adjacent to factory
-    const playerToFactoryX = factoryCenterX - playerRef.current.x;
-    const playerToFactoryY = factoryCenterY - playerRef.current.y;
-    const distanceToFactory = Math.sqrt(
-      playerToFactoryX * playerToFactoryX + 
-      playerToFactoryY * playerToFactoryY
-    );
-    const isAdjacentToFactory = distanceToFactory < TILE_SIZE * 2; // Within 2 tiles
-    
     if (isTapOnFactory) {
-      if (isAdjacentToFactory) {
-        setShowFactoryDialogue(true);
-        return; // Don't move when opening dialogue
-      } else {
-        // Player is too far, try to move closer to the factory
-        const angle = Math.atan2(playerToFactoryY, playerToFactoryX);
-        const nearFactoryX = factoryCenterX - Math.cos(angle) * TILE_SIZE * 1.5;
-        const nearFactoryY = factoryCenterY - Math.sin(angle) * TILE_SIZE * 1.5;
-        
-        // Move to new target
-        currentTargetRef.current = { x: nearFactoryX, y: nearFactoryY };
-        moveToWithCollisionCheck(nearFactoryX, nearFactoryY);
-        return;
-      }
+      setShowFactoryDialogue(true);
+      return; // Don't move when opening dialogue
     }
     
     // Cancel any existing movement
@@ -897,6 +915,7 @@ const GameWorld = () => {
       if (isTapOnFarmer) {
         if (isCloseToFarmer) {
           // Player is close enough, show the dialogue
+          setHasPlayerApproachedFarmer(true);
           setShowFarmerDialogue(true);
           return; // Don't move when opening dialogue
         } else {
@@ -957,8 +976,8 @@ const GameWorld = () => {
       }
     }
     
-    // Check if user tapped on the antagonist
-    if (showAntagonist && !hasBetterEggs) {
+    // Only check for antagonist interaction in Chapter 1
+    if (chapter === 1 && showAntagonist && !hasBetterEggs) {
       const antagonistSize = TILE_SIZE * 3;
       const antagonistLeft = antagonistPosition.x - antagonistSize / 2;
       const antagonistTop = antagonistPosition.y - antagonistSize / 2;
@@ -979,7 +998,7 @@ const GameWorld = () => {
 
   // Optimize tile rendering to only render visible tiles
   const renderTile = (tileKey) => {
-    const tile = tiles[tileKey];
+    const tile = isInFactory ? factoryInteriorTiles[tileKey] : tiles[tileKey];
     if (!tile) return null;
     
     // Only render tiles that are visible in the viewport
@@ -1012,6 +1031,8 @@ const GameWorld = () => {
             top: tileTop,
             backgroundColor: tile.type === 'market' ? '#8B4513' : 
                            tile.type === 'grey' ? '#808080' : 
+                           tile.type === 'door' ? '#4A4A4A' :
+                           tile.type === 'factoryBorder' ? '#333333' :
                            tile.type === 'path' ? '#8B4513' : 
                            tile.type === 'lightPath' ? '#A0522D' :
                            tile.type === 'darkGrass' ? '#2D5A27' : '#3D8B37',
@@ -1019,6 +1040,8 @@ const GameWorld = () => {
             borderWidth: 1,
             borderColor: tile.type === 'market' ? '#A0522D' : 
                         tile.type === 'grey' ? '#666666' : 
+                        tile.type === 'door' ? '#000000' :
+                        tile.type === 'factoryBorder' ? '#000000' :
                         tile.type === 'path' ? '#A0522D' : 
                         tile.type === 'lightPath' ? '#CD853F' :
                         tile.type === 'darkGrass' ? '#1E3D1E' : '#2D5A27'
@@ -1169,46 +1192,113 @@ const GameWorld = () => {
     );
   };
 
-  // Render the chicken circle group
+  // Update chicken circle group
   const renderChickenCircle = () => {
-    const circleRadius = 50; // Radius of the circle
-    const centerX = WORLD_SIZE * TILE_SIZE - 200; // Moved further from right edge
-    const centerY = 200; // Moved further from top edge
-    const chickenSize = 24;
-    
-    // Calculate positions for 5 chickens in a circle
-    const chickenPositions = Array.from({ length: 5 }, (_, i) => {
-      const angle = (i * 2 * Math.PI / 5) - Math.PI / 2; // Offset by -90 degrees to start at top
-      return {
-        x: centerX + circleRadius * Math.cos(angle),
-        y: centerY + circleRadius * Math.sin(angle),
-        rotation: angle + Math.PI // Face inward
-      };
-    });
-    
-    return (
-      <View style={[
-        styles.chickenCircleContainer,
-        {
-          left: centerX - circleRadius - 20,
-          top: centerY - circleRadius - 20,
-          width: (circleRadius * 2) + 40,
-          height: (circleRadius * 2) + 40,
-          backgroundColor: 'transparent',
-          borderWidth: 0,
-        }
-      ]}>
-        {chickenPositions.map((pos, index) => (
+    if (chapter === 1) {
+      const circleRadius = 50;
+      const centerX = WORLD_SIZE * TILE_SIZE - 200;
+      const centerY = 200;
+      const chickenSize = 24;
+      
+      const chickenPositions = Array.from({ length: 5 }, (_, i) => {
+        const angle = (i * 2 * Math.PI / 5) - Math.PI / 2;
+        return {
+          x: centerX + circleRadius * Math.cos(angle),
+          y: centerY + circleRadius * Math.sin(angle),
+          rotation: angle + Math.PI
+        };
+      });
+      
+      return (
+        <View style={[
+          styles.chickenCircleContainer,
+          {
+            left: centerX - circleRadius - 20,
+            top: centerY - circleRadius - 20,
+            width: (circleRadius * 2) + 40,
+            height: (circleRadius * 2) + 40,
+            backgroundColor: 'transparent',
+            borderWidth: 0,
+          }
+        ]}>
+          {chickenPositions.map((pos, index) => (
+            <View
+              key={`circle-chicken-${index}`}
+              style={[
+                styles.chickenContainer,
+                {
+                  left: pos.x - centerX + circleRadius + 20,
+                  top: pos.y - centerY + circleRadius + 20,
+                  width: chickenSize,
+                  height: chickenSize,
+                  transform: [{ rotate: `${pos.rotation}rad` }]
+                }
+              ]}
+            >
+              <Animated.View 
+                style={[
+                  styles.chickenBody,
+                  {
+                    transform: [
+                      { translateY: chickenBob }
+                    ]
+                  }
+                ]}
+              >
+                <Image 
+                  source={chickenImage} 
+                  style={{width: chickenSize, height: chickenSize}}
+                  resizeMode="contain"
+                />
+              </Animated.View>
+            </View>
+          ))}
+        </View>
+      );
+    } else {
+      // Chapter 2: Blood spatters and frantic chicken
+      const centerX = WORLD_SIZE * TILE_SIZE - 200;
+      const centerY = 200;
+      
+      return (
+        <>
+          {/* Blood spatters as part of the ground */}
+          <View style={[
+            styles.bloodSpatterContainer,
+            {
+              left: centerX - 100,
+              top: centerY - 100,
+              width: 200,
+              height: 200,
+              zIndex: 1 // Place below other elements
+            }
+          ]}>
+            {bloodSpatterPositions.current?.map((pos, i) => (
+              <View
+                key={`blood-spatter-${i}`}
+                style={[
+                  styles.bloodSpatter,
+                  {
+                    left: `${pos.left}%`,
+                    top: `${pos.top}%`,
+                    width: pos.size,
+                    height: pos.size,
+                    borderRadius: 0
+                  }
+                ]}
+              />
+            ))}
+          </View>
+          {/* Add frantic chicken with direct position updates */}
           <View
-            key={`circle-chicken-${index}`}
             style={[
               styles.chickenContainer,
               {
-                left: pos.x - centerX + circleRadius + 20,
-                top: pos.y - centerY + circleRadius + 20,
-                width: chickenSize,
-                height: chickenSize,
-                transform: [{ rotate: `${pos.rotation}rad` }]
+                left: franticChickenPos.x - 12,
+                top: franticChickenPos.y - 12,
+                width: 24,
+                height: 24,
+                zIndex: 6
               }
             ]}
           >
@@ -1224,14 +1314,14 @@ const GameWorld = () => {
             >
               <Image 
                 source={chickenImage} 
-                style={{width: chickenSize, height: chickenSize}}
+                style={{width: 24, height: 24}}
                 resizeMode="contain"
               />
             </Animated.View>
           </View>
-        ))}
-      </View>
-    );
+        </>
+      );
+    }
   };
 
   // Render the farmer character
@@ -1308,83 +1398,49 @@ const GameWorld = () => {
           <Text style={styles.marketRoomTitle}>WELCOME TO THE MARKET</Text>
           
           <View style={styles.marketItems}>
-            {/* Speed Boost */}
-            <View style={styles.marketItem}>
-              <View style={styles.marketItemIcon}>
-                <Image 
-                  source={chickenImage} 
-                  style={{width: 30, height: 30}}
-                  resizeMode="contain"
-                />
-              </View>
-              <Text style={styles.marketItemText}>Speed Boost {hasSpeedBoost ? '(Purchased)' : ''}</Text>
-              <TouchableWithoutFeedback onPress={() => {
-                if (eggCount >= 50 && !hasSpeedBoost) {
-                  setEggCount(prev => prev - 50);
-                  setHasSpeedBoost(true);
-                  // Increase player speed by 20%
-                  setMoveSpeed(prev => prev * 1.2);
-                }
-              }}>
-                <View style={[
-                  styles.marketItemPrice,
-                  { backgroundColor: (eggCount >= 50 && !hasSpeedBoost) ? '#4CAF50' : '#9E9E9E' }
-                ]}>
-                  <Text style={styles.marketItemPriceText}>50 eggs</Text>
+            {marketItems.map((item, index) => (
+              <View key={index} style={styles.marketItem}>
+                <View style={styles.marketItemIcon}>
+                  <Text style={styles.marketItemIconText}>{item.icon}</Text>
                 </View>
-              </TouchableWithoutFeedback>
-            </View>
-            
-            {/* Better Eggs */}
-            <View style={styles.marketItem}>
-              <View style={styles.marketItemIcon}>
-                <Image 
-                  source={chickenImage} 
-                  style={{width: 30, height: 30}}
-                  resizeMode="contain"
-                />
+                <Text style={styles.marketItemText}>
+                  {item.name} {item.name === 'Speed Boost' && hasSpeedBoost ? '(Purchased)' : 
+                             item.name === 'Chicken Feed' && hasChickenFeed ? '(Purchased)' : 
+                             item.name === 'Better Eggs' && hasBetterEggs ? '(Purchased)' : ''}
+                </Text>
+                <TouchableWithoutFeedback onPress={() => {
+                  if (item.price <= eggCount) {
+                    setEggCount(prev => prev - item.price);
+                    if (item.onPurchase) {
+                      item.onPurchase();
+                    }
+                    switch (item.name) {
+                      case 'Speed Boost':
+                        setHasSpeedBoost(true);
+                        setMoveSpeed(prev => prev * 1.2);
+                        break;
+                      case 'Chicken Feed':
+                        setHasChickenFeed(true);
+                        setEggProductionRate(prev => prev + 1);
+                        break;
+                      case 'Better Eggs':
+                        setHasBetterEggs(true);
+                        break;
+                      case 'Newspaper':
+                        setShowNewspaperDialogue(true);
+                        break;
+                    }
+                  }
+                }}>
+                  <View style={[
+                    styles.marketItemPrice,
+                    { backgroundColor: (item.price <= eggCount) ? '#4CAF50' : '#9E9E9E' }
+                  ]}>
+                    <Text style={styles.marketItemPriceText}>{item.price} eggs</Text>
+                  </View>
+                </TouchableWithoutFeedback>
               </View>
-              <Text style={styles.marketItemText}>Better Eggs {hasBetterEggs ? '(Purchased)' : ''}</Text>
-              <TouchableWithoutFeedback onPress={() => {
-                if (eggCount >= 100 && !hasBetterEggs) {
-                  setEggCount(prev => prev - 100);
-                  setHasBetterEggs(true);
-                }
-              }}>
-                <View style={[
-                  styles.marketItemPrice,
-                  { backgroundColor: (eggCount >= 100 && !hasBetterEggs) ? '#4CAF50' : '#9E9E9E' }
-                ]}>
-                  <Text style={styles.marketItemPriceText}>100 eggs</Text>
-                </View>
-              </TouchableWithoutFeedback>
-            </View>
-            
-            {/* Chicken Feed */}
-            <View style={styles.marketItem}>
-              <View style={styles.marketItemIcon}>
-                <Image 
-                  source={chickenImage} 
-                  style={{width: 30, height: 30}}
-                  resizeMode="contain"
-                />
-              </View>
-              <Text style={styles.marketItemText}>Chicken Feed {hasChickenFeed ? '(Purchased)' : ''}</Text>
-              <TouchableWithoutFeedback onPress={() => {
-                if (eggCount >= 25 && !hasChickenFeed) {
-                  setEggCount(prev => prev - 25);
-                  setHasChickenFeed(true);
-                  setEggProductionRate(prev => prev + 1);
-                }
-              }}>
-                <View style={[
-                  styles.marketItemPrice,
-                  { backgroundColor: (eggCount >= 25 && !hasChickenFeed) ? '#4CAF50' : '#9E9E9E' }
-                ]}>
-                  <Text style={styles.marketItemPriceText}>25 eggs</Text>
-                </View>
-              </TouchableWithoutFeedback>
-            </View>
+            ))}
           </View>
           
           <TouchableWithoutFeedback onPress={() => setShowMarketRoom(false)}>
@@ -1408,22 +1464,80 @@ const GameWorld = () => {
             <Text style={styles.dialogueTitle}>Factory</Text>
           </View>
           <Text style={styles.dialogueText}>
-            {isEggCounterActive 
-              ? "You've already started production!"
-              : "Welcome to the factory! Eggs are being produced automatically. Each egg is worth 1 coin."}
+            {chapter === 2 
+              ? "Would you like to enter the factory?"
+              : isEggCounterActive 
+                ? "You've already started production!"
+                : "Welcome to the factory! Eggs are being produced automatically. Each egg is worth 1 coin."}
           </Text>
-          <TouchableWithoutFeedback onPress={() => {
-            setShowFactoryDialogue(false);
-            if (!isEggCounterActive) {
-              setIsEggCounterActive(true); // Start egg counter when dialogue is closed
-            }
-          }}>
-            <View style={styles.dialogueButton}>
-              <Text style={styles.dialogueButtonText}>
-                {isEggCounterActive ? "OK" : "Start Production"}
-              </Text>
+          {chapter === 2 && (
+            <View style={styles.dialogueButtons}>
+              <TouchableWithoutFeedback onPress={() => {
+                setShowFactoryDialogue(false);
+                setIsInFactory(true);
+                // Generate factory interior tiles with doorway and border
+                const interiorTiles = {};
+                for (let y = 0; y < 20; y++) {
+                  for (let x = 0; x < 20; x++) {
+                    const tileKey = `${x}-${y}`;
+                    // Add doorway on the left side (3 tiles tall)
+                    if (x === 0 && y >= 8 && y <= 10) {
+                      interiorTiles[tileKey] = { 
+                        x, 
+                        y, 
+                        type: 'door'
+                      };
+                    } else if (x === 0 || x === 19 || y === 0 || y === 19) {
+                      // Add border tiles
+                      interiorTiles[tileKey] = { 
+                        x, 
+                        y, 
+                        type: 'factoryBorder'
+                      };
+                    } else {
+                      interiorTiles[tileKey] = { 
+                        x, 
+                        y, 
+                        type: 'grey'
+                      };
+                    }
+                  }
+                }
+                setFactoryInteriorTiles(interiorTiles);
+                // Position player in factory
+                const centerX = 10 * TILE_SIZE;
+                const centerY = 5 * TILE_SIZE; // Start higher up
+                setPlayerPosition({ x: centerX, y: centerY });
+                playerRef.current = { x: centerX, y: centerY };
+                updateCameraOffset();
+              }}>
+                <View style={styles.dialogueButton}>
+                  <Text style={styles.dialogueButtonText}>Yes</Text>
+                </View>
+              </TouchableWithoutFeedback>
+              <TouchableWithoutFeedback onPress={() => {
+                setShowFactoryDialogue(false);
+              }}>
+                <View style={styles.dialogueButton}>
+                  <Text style={styles.dialogueButtonText}>No</Text>
+                </View>
+              </TouchableWithoutFeedback>
             </View>
-          </TouchableWithoutFeedback>
+          )}
+          {chapter === 1 && (
+            <TouchableWithoutFeedback onPress={() => {
+              setShowFactoryDialogue(false);
+              if (!isEggCounterActive) {
+                setIsEggCounterActive(true);
+              }
+            }}>
+              <View style={styles.dialogueButton}>
+                <Text style={styles.dialogueButtonText}>
+                  {isEggCounterActive ? "OK" : "Start Production"}
+                </Text>
+              </View>
+            </TouchableWithoutFeedback>
+          )}
         </View>
       </View>
     );
@@ -1433,7 +1547,6 @@ const GameWorld = () => {
   const renderFarmerDialogue = () => {
     if (!showFarmerDialogue) return null;
     
-    // No more minimized state - dialogue is either fully shown or hidden
     return (
       <View style={styles.dialogueContainer}>
         <View style={styles.dialogueContent}>
@@ -1441,9 +1554,11 @@ const GameWorld = () => {
             <Text style={styles.dialogueTitle}>Farmer</Text>
           </View>
           <Text style={styles.dialogueText}>
-            {canMove 
-              ? "Go find something to do, can't you see I'm busy?!"
-              : "Welcome to CluckHero! You must be the new hire, look a bit funny though. You sure you're in the right place? Anyways... I should get to work. Let me know if you have any questions!"}
+            {chapter === 2 
+              ? "You're by yourself on this one man.."
+              : hasPlayerApproachedFarmer 
+                ? "Go find something to do, can't you see I'm busy?!"
+                : "Welcome to CluckHero! You must be the new hire, look a bit funny though. You sure you're in the right place? Anyways... I should get to work. Let me know if you have any questions!"}
           </Text>
           <TouchableWithoutFeedback onPress={() => {
             setShowFarmerDialogue(false);
@@ -1483,8 +1598,7 @@ const GameWorld = () => {
 
   // Update egg counter component
   const renderEggCounter = () => {
-    if (!isEggCounterActive) return null;
-    
+    // Show egg counter in both Chapter 1 and 2
     return (
       <View style={{
         position: 'absolute',
@@ -1576,8 +1690,6 @@ const GameWorld = () => {
         // After talking animation, show dialogue
         setIsFarmerWalking(false);
         setShowFarmerDialogue(true);
-        
-        // Don't auto-minimize anymore, player must tap OK to close
       });
     });
   };
@@ -1637,7 +1749,7 @@ const GameWorld = () => {
   useEffect(() => {
     // Animate factory between states
     factoryAnimationRef.current = setInterval(() => {
-      setFactoryAnimationState(prev => prev === 1 ? 2 : 1);
+      setFactoryAnimationState(prev => (prev % 3) + 1); // Cycle through 1, 2, 3
     }, 1000); // Switch every second
 
     return () => {
@@ -1652,8 +1764,8 @@ const GameWorld = () => {
     if (!spawnPoint.current) return null;
     
     const { x, y } = spawnPoint.current;
-    const factoryX = x * TILE_SIZE - FACTORY_SIZE * 1.5; // Position to the left of spawn
-    const factoryY = y * TILE_SIZE - FACTORY_SIZE / 2; // Center vertically
+    const factoryX = x * TILE_SIZE - FACTORY_SIZE * 1.5 - TILE_SIZE * 2; // Move left by 2 tiles
+    const factoryY = y * TILE_SIZE - FACTORY_SIZE / 2 - TILE_SIZE; // Move up by 1 tile
     
     return (
       <View
@@ -1663,29 +1775,30 @@ const GameWorld = () => {
           height: FACTORY_SIZE,
           left: factoryX,
           top: factoryY,
-          zIndex: 7, // Above tiles but below player
-          backgroundColor: 'transparent' // Ensure background is transparent
+          zIndex: 7,
+          backgroundColor: 'transparent'
         }}
       >
         <Image 
-          source={factoryAnimationState === 1 ? factory1Image : factory2Image} 
+          source={factoryAnimationState === 1 ? factory1Image : 
+                 factoryAnimationState === 2 ? factory2Image : factory3Image} 
           style={{
             width: '100%',
             height: '100%',
             resizeMode: 'contain',
-            position: 'absolute' // Ensure image is positioned absolutely
+            position: 'absolute'
           }}
         />
-        {/* Add invisible interaction box in center */}
+        {/* Add solid hitbox for factory interaction - now matches image size */}
         <View
           style={{
             position: 'absolute',
-            width: TILE_SIZE * 16, // Increased from 8 to 16 tiles
-            height: TILE_SIZE * 16, // Increased from 8 to 16 tiles
-            left: FACTORY_SIZE/2 - (TILE_SIZE * 8), // Adjusted to center the larger hitbox
-            top: FACTORY_SIZE/2 - (TILE_SIZE * 8), // Adjusted to center the larger hitbox
-            backgroundColor: 'transparent', // Make it invisible
-            zIndex: 8 // Above factory image
+            width: FACTORY_SIZE,
+            height: FACTORY_SIZE,
+            left: 0,
+            top: 0,
+            backgroundColor: 'transparent',
+            zIndex: 8
           }}
         />
       </View>
@@ -1700,14 +1813,18 @@ const GameWorld = () => {
       <View style={styles.dialogueContainer}>
         <View style={styles.dialogueContent}>
           <View style={styles.dialogueHeader}>
-            <Text style={styles.dialogueTitle}>Chicken</Text>
+            <Text style={styles.dialogueTitle}>You</Text>
           </View>
           <Text style={styles.dialogueText}>
-            Gluck gluck. Gluck? GLUCK?
+            {chapter === 1 
+              ? "Gluck gluck. Gluck? GLUCK?"
+              : "What the cluck... what have I gotten myself into.."}
           </Text>
           <TouchableWithoutFeedback onPress={() => {
             setShowChickenDialogue(false);
-            setShowProtagonistDialogue(true);
+            if (chapter === 1) {
+              setShowProtagonistDialogue(true);
+            }
           }}>
             <View style={styles.dialogueButton}>
               <Text style={styles.dialogueButtonText}>OK</Text>
@@ -1800,6 +1917,7 @@ const GameWorld = () => {
         } else {
           // Reached spawn position
           setAntagonistReturning(false);
+          setShowAntagonist(false); // Hide antagonist after reaching spawn
         }
         return;
       }
@@ -1847,23 +1965,26 @@ const GameWorld = () => {
         break;
       case 'Better Eggs':
         setHasBetterEggs(true);
-        // Antagonist will now start following the player
+        break;
+      case 'Newspaper':
+        setShowMarketRoom(false);
+        setShowNewspaperDialogue(true);
         break;
     }
   };
 
-  // Add antagonist rendering
+  // Update antagonist rendering to only show in Chapter 1
   const renderAntagonist = () => {
-    if (!showAntagonist) return null;
+    if (!showAntagonist || chapter !== 1) return null;
 
     return (
       <View
         style={{
           position: 'absolute',
-          left: antagonistPosition.x - TILE_SIZE * 1.5, // Centered with larger size
-          top: antagonistPosition.y - TILE_SIZE * 1.5, // Centered with larger size
-          width: TILE_SIZE * 3, // Increased size to 3x3 tiles
-          height: TILE_SIZE * 3, // Increased size to 3x3 tiles
+          left: antagonistPosition.x - TILE_SIZE * 1.5,
+          top: antagonistPosition.y - TILE_SIZE * 1.5,
+          width: TILE_SIZE * 3,
+          height: TILE_SIZE * 3,
           zIndex: 6,
           backgroundColor: 'transparent'
         }}
@@ -1881,7 +2002,7 @@ const GameWorld = () => {
   };
 
   // Update market items with new prices
-  const marketItems = [
+  const marketItems = chapter === 1 ? [
     {
       name: 'Speed Boost',
       description: 'Move 20% faster',
@@ -1897,8 +2018,21 @@ const GameWorld = () => {
     {
       name: 'Better Eggs',
       description: 'Add 2 eggs per second',
-      price: 25,
+      price: 100,
       icon: '🥚'
+    }
+  ] : [
+    {
+      name: 'Newspaper',
+      description: 'Read the latest news',
+      price: 10,
+      icon: '📰'
+    },
+    {
+      name: 'ID Card',
+      description: 'Official identification',
+      price: 2000,
+      icon: '🪪'
     }
   ];
 
@@ -1947,51 +2081,92 @@ const GameWorld = () => {
             <Text style={styles.dialogueTitle}>You</Text>
           </View>
           <Text style={styles.dialogueText}>
-            What is this place???
+            {chapter === 1 
+              ? "What is this 'place'???"
+              : "This place looks different..."}
           </Text>
-          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
-            <TouchableWithoutFeedback onPress={() => setShowSelfDialogue(false)}>
-              <View style={styles.dialogueButton}>
-                <Text style={styles.dialogueButtonText}>OK</Text>
-              </View>
-            </TouchableWithoutFeedback>
-            <TouchableWithoutFeedback onPress={() => {
-              setShowSelfDialogue(false);
-              // Start fade to black
-              Animated.timing(fadeAnim, {
-                toValue: 1,
-                duration: 2000,
-                useNativeDriver: true
-              }).start(() => {
-                // Show chapter text after fade completes
-                setTimeout(() => {
-                  setShowChapterText(true);
-                }, 1000);
-              });
-            }}>
-              <View style={styles.dialogueButton}>
-                <Text style={styles.dialogueButtonText}>...</Text>
-              </View>
-            </TouchableWithoutFeedback>
-          </View>
+          <TouchableWithoutFeedback onPress={async () => {
+            setShowSelfDialogue(false);
+            
+            // Start screen fade
+            Animated.timing(fadeAnim, {
+              toValue: 1,
+              duration: 2000,
+              useNativeDriver: true,
+              easing: Easing.inOut(Easing.ease)
+            }).start(async () => {
+              // After screen fade completes, show chapter text
+              setShowChapterText(true);
+              
+              // Clean up Chapter 1 if transitioning to Chapter 2
+              if (chapter === 1) {
+                cleanupChapter1();
+              }
+              
+              // Fade out music over 2 seconds
+              if (sound) {
+                try {
+                  await sound.setVolumeAsync(0, { fadeDuration: 2000 });
+                  await sound.stopAsync();
+                } catch (error) {
+                  console.error('Error fading music:', error);
+                }
+              }
+              
+              // After 10 seconds, fade out chapter text and navigate
+              setTimeout(() => {
+                Animated.timing(fadeAnim, {
+                  toValue: 0,
+                  duration: 2000,
+                  useNativeDriver: true,
+                  easing: Easing.inOut(Easing.ease)
+                }).start(() => {
+                  setShowChapterText(false);
+                  if (chapter === 1) {
+                    navigation.navigate('Chapter2');
+                  }
+                });
+              }, 10000);
+            });
+          }}>
+            <View style={styles.dialogueButton}>
+              <Text style={styles.dialogueButtonText}>OK</Text>
+            </View>
+          </TouchableWithoutFeedback>
         </View>
       </View>
     );
   };
 
-  // Add fade overlay and chapter text
+  // Add fade overlay and chapter text with smooth animation
   const renderFadeAndChapter = () => {
     if (fadeAnim._value === 0 && !showChapterText) return null;
 
     return (
       <Animated.View style={[
         styles.fadeOverlay,
-        { opacity: fadeAnim }
+        { 
+          opacity: fadeAnim,
+          backgroundColor: 'black'
+        }
       ]}>
         {showChapterText && (
-          <Text style={styles.chapterText}>
-            CHAPTER 2
-          </Text>
+          <Animated.View style={{
+            opacity: fadeAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0, 1]
+            }),
+            transform: [{
+              scale: fadeAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.8, 1]
+              })
+            }]
+          }}>
+            <Text style={styles.chapterText}>
+              CHAPTER {chapter + 1}
+            </Text>
+          </Animated.View>
         )}
       </Animated.View>
     );
@@ -2005,6 +2180,407 @@ const GameWorld = () => {
 
     return () => clearTimeout(spawnTimer);
   }, []);
+
+  // Initialize audio
+  useEffect(() => {
+    let isMounted = true;
+    console.log('Initializing audio...');
+
+    const setupAudio = async () => {
+      try {
+        console.log('Setting up audio mode...');
+        await Audio.setAudioModeAsync({
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: true,
+          shouldDuckAndroid: true,
+        });
+        console.log('Audio mode set up successfully');
+
+        // Only load Chapter 1 music if we're in Chapter 1
+        if (chapter === 1) {
+          console.log('Loading sound file...');
+          const { sound: audioSound } = await Audio.Sound.createAsync(
+            chapter1Music,
+            { 
+              shouldPlay: true,
+              volume: 1.0,
+              isLooping: true
+            }
+          );
+          console.log('Sound loaded successfully');
+
+          if (isMounted) {
+            setSound(audioSound);
+            setIsMusicPlaying(true);
+            console.log('Sound state updated');
+          }
+        } else {
+          // In Chapter 2, use the provided sound from Chapter2 component
+          setSound(chapter2Sound);
+          setIsMusicPlaying(chapter2MusicPlaying);
+        }
+      } catch (error) {
+        console.error('Error in audio setup:', error);
+      }
+    };
+
+    setupAudio();
+
+    return () => {
+      console.log('Cleaning up audio...');
+      isMounted = false;
+      if (sound && chapter === 1) { // Only unload if it's Chapter 1's sound
+        sound.unloadAsync().catch(error => {
+          console.error('Error unloading sound:', error);
+        });
+      }
+    };
+  }, [chapter, chapter2Sound, chapter2MusicPlaying]);
+
+  // Function to start music
+  const startMusic = async () => {
+    console.log('Attempting to start music...');
+    if (!sound) {
+      console.log('No sound object available');
+      return;
+    }
+
+    try {
+      console.log('Setting up sound...');
+      await sound.setPositionAsync(0);
+      await sound.setVolumeAsync(1.0);
+      await sound.setIsLoopingAsync(true);
+      console.log('Playing sound...');
+      await sound.playAsync();
+      setIsMusicPlaying(true);
+      console.log('Music started successfully');
+    } catch (error) {
+      console.error('Error playing music:', error);
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        stack: error.stack
+      });
+    }
+  };
+
+  // Start music when antagonist reaches player
+  useEffect(() => {
+    console.log('Checking antagonist state:', {
+      reachedPlayer: antagonistReachedPlayer,
+      isMusicPlaying
+    });
+    if (antagonistReachedPlayer && !isMusicPlaying) {
+      console.log('Antagonist reached player, starting music');
+      startMusic();
+    }
+  }, [antagonistReachedPlayer, isMusicPlaying]);
+
+  // Add effect to show explore alert after farmer dialogue
+  useEffect(() => {
+    if (canMove && chapter === 1) { // Only show in Chapter 1
+      const timer = setTimeout(() => {
+        setShowExploreAlert(true);
+        // Start pulsing animation
+        Animated.loop(
+          Animated.sequence([
+            Animated.timing(pulseAnim, {
+              toValue: 1.2,
+              duration: 1000,
+              useNativeDriver: true,
+              easing: Easing.inOut(Easing.ease)
+            }),
+            Animated.timing(pulseAnim, {
+              toValue: 1,
+              duration: 1000,
+              useNativeDriver: true,
+              easing: Easing.inOut(Easing.ease)
+            })
+          ])
+        ).start();
+
+        // Hide alert after 5 seconds
+        setTimeout(() => {
+          setShowExploreAlert(false);
+        }, 5000);
+      }, 15000); // Show after 15 seconds
+
+      return () => clearTimeout(timer);
+    }
+  }, [canMove, chapter]);
+
+  // Add render function for explore alert
+  const renderExploreAlert = () => {
+    if (!showExploreAlert) return null;
+
+    return (
+      <Animated.View style={[
+        styles.exploreAlert,
+        {
+          transform: [{ scale: pulseAnim }],
+          opacity: pulseAnim.interpolate({
+            inputRange: [1, 1.2],
+            outputRange: [0.8, 1]
+          })
+        }
+      ]}>
+        <Text style={styles.exploreAlertText}>Explore the Map</Text>
+      </Animated.View>
+    );
+  };
+
+  // Initialize blood spatter positions once
+  useEffect(() => {
+    if (chapter === 2 && !bloodSpatterPositions.current) {
+      bloodSpatterPositions.current = Array.from({ length: 50 }, (_, i) => ({
+        left: Math.random() * 100,
+        top: Math.random() * 100,
+        size: 2 + Math.random() * 3
+      }));
+    }
+  }, [chapter]);
+
+  // Initialize rain drops with varying properties
+  useEffect(() => {
+    if (chapter === 2 && !rainDrops.current) {
+      // Reduce number of drops to 15 for maximum performance
+      rainDrops.current = Array.from({ length: 15 }, () => ({
+        x: Math.random() * 100,
+        y: Math.random() * 100,
+        size: 1 + Math.random() * 2,
+        speed: 0.5 + Math.random() * 0.5,
+        opacity: 0.3 + Math.random() * 0.4,
+        wind: -0.2 + Math.random() * 0.4
+      }));
+    }
+  }, [chapter]);
+
+  // Add thunderstorm effect for Chapter 2 with optimized performance
+  useEffect(() => {
+    if (chapter === 2) {
+      // Reset the animation value
+      rainAnim.setValue(0);
+      
+      // Create a continuous rain animation with optimized timing
+      const rainAnimation = Animated.loop(
+        Animated.timing(rainAnim, {
+          toValue: 1,
+          duration: 600, // Even faster animation for better performance
+          useNativeDriver: true,
+          easing: Easing.linear
+        })
+      );
+
+      // Store and start the animation
+      rainAnimationRef.current = rainAnimation;
+      rainAnimation.start();
+
+      // Optimize lightning effect
+      const lightningInterval = setInterval(() => {
+        if (Math.random() < 0.01) { // Further reduced frequency
+          setLightningFlash(true);
+          setTimeout(() => setLightningFlash(false), 5); // Shorter duration
+        }
+      }, 20000); // Much less frequent lightning
+
+      return () => {
+        // Proper cleanup
+        if (rainAnimationRef.current) {
+          rainAnimationRef.current.stop();
+          rainAnimationRef.current = null;
+        }
+        clearInterval(lightningInterval);
+        rainAnim.setValue(0);
+      };
+    }
+  }, [chapter, rainAnim]);
+
+  // Update rain rendering to be more performant
+  const renderThunderstorm = () => {
+    if (chapter !== 2) return null;
+
+    return (
+      <>
+        {/* Dark overlay for storm with optimized transitions */}
+        <Animated.View style={[
+          styles.thunderstormOverlay,
+          { 
+            opacity: lightningFlash ? 0.1 : 0.7,
+            backgroundColor: lightningFlash ? '#ffffff' : '#1a1a2e'
+          }
+        ]} />
+        
+        {/* Rain effect with optimized rendering */}
+        <View style={styles.rainContainer}>
+          {rainDrops.current?.map((drop, i) => (
+            <Animated.View
+              key={i}
+              style={[
+                styles.rainDrop,
+                {
+                  left: `${drop.x}%`,
+                  top: `${drop.y}%`,
+                  width: drop.size,
+                  height: drop.size * 4,
+                  opacity: drop.opacity,
+                  transform: [
+                    {
+                      translateY: rainAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, 150 * drop.speed] // Reduced distance for better performance
+                      })
+                    },
+                    {
+                      translateX: rainAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, 5 * drop.wind] // Reduced wind effect
+                      })
+                    }
+                  ]
+                }
+              ]}
+            />
+          ))}
+        </View>
+      </>
+    );
+  };
+
+  // Add render function for lantern and light effect
+  const renderLantern = () => {
+    if (chapter !== 2) return null;
+
+    // Get the current torch image based on frame
+    const torchImage = [torch0Image, torch1Image, torch2Image][torchFrame];
+
+    return (
+      <>
+        {/* Torch itself */}
+        <View style={[
+          styles.lantern,
+          {
+            left: 722 - 3 * TILE_SIZE + TILE_SIZE * 3, // Move one more tile right
+            top: 715 - TILE_SIZE * 2, // Move one tile up
+          }
+        ]}>
+          <Image 
+            source={torchImage}
+            style={[styles.torchImage, {
+              width: 256, // Keep the same size
+              height: 256,
+            }]}
+          />
+        </View>
+      </>
+    );
+  };
+
+  // Add newspaper dialogue component
+  const renderNewspaperDialogue = () => {
+    if (!showNewspaperDialogue) return null;
+    
+    return (
+      <View style={styles.newspaperContainer}>
+        <View style={styles.newspaperContent}>
+          <View style={styles.newspaperHeader}>
+            <Text style={styles.newspaperTitle}>DAILY NEWS</Text>
+            <Text style={styles.newspaperDate}>March 13, 2027</Text>
+          </View>
+          <View style={styles.newspaperBody}>
+            <Text style={styles.newspaperHeadline}>BREAKING! PROTESTS!</Text>
+            <Text style={styles.newspaperText}>
+              The Cluckville community has had enough of the Evil Factory, but don't take it from us. A picket line has formed outside of the company's headquarters, with no sign of slowing down anytime soon.
+            </Text>
+          </View>
+          <TouchableWithoutFeedback onPress={() => setShowNewspaperDialogue(false)}>
+            <View style={styles.newspaperButton}>
+              <Text style={styles.newspaperButtonText}>Close</Text>
+            </View>
+          </TouchableWithoutFeedback>
+        </View>
+      </View>
+    );
+  };
+
+  // Add effect for frantic chicken movement
+  useEffect(() => {
+    if (chapter === 2) {
+      // Start the frantic chicken movement with direct position updates
+      franticChickenTimer.current = setInterval(() => {
+        const centerX = WORLD_SIZE * TILE_SIZE - 200;
+        const centerY = 200;
+        const radius = 100; // Keep within the spatter area
+        
+        // Calculate new random position within the circle
+        const angle = Math.random() * Math.PI * 2;
+        const distance = Math.random() * radius;
+        const newX = centerX + Math.cos(angle) * distance;
+        const newY = centerY + Math.sin(angle) * distance;
+        
+        // Update position directly
+        setFranticChickenPos({ x: newX, y: newY });
+      }, 1000); // Move every second
+
+      return () => {
+        if (franticChickenTimer.current) {
+          clearInterval(franticChickenTimer.current);
+        }
+      };
+    }
+  }, [chapter]);
+
+  // Add cleanup function for Chapter 1
+  const cleanupChapter1 = () => {
+    // Stop and unload Chapter 1 music
+    if (sound && chapter === 1) {
+      try {
+        sound.stopAsync();
+        sound.unloadAsync();
+      } catch (error) {
+        console.log('Sound already unloaded or not loaded');
+      }
+    }
+    
+    // Reset Chapter 1 specific state
+    setShowFarmerDialogue(false);
+    setShowFactoryDialogue(false);
+    setShowChickenDialogue(false);
+    setShowProtagonistDialogue(false);
+    setShowExploreAlert(false);
+    setHasPlayerApproachedFarmer(false);
+    setFarmerPosition(null);
+    setChickenPosition(null);
+    setEggCount(0);
+    setIsEggCounterActive(false);
+    setHasSpeedBoost(false);
+    setHasChickenFeed(false);
+    setHasBetterEggs(false);
+    setEggProductionRate(1);
+    setMoveSpeed(400);
+    
+    // Clear any intervals or timeouts
+    if (franticChickenTimer.current) {
+      clearInterval(franticChickenTimer.current);
+    }
+    if (factoryAnimationRef.current) {
+      clearInterval(factoryAnimationRef.current);
+    }
+  };
+
+  // Add torch animation effect
+  useEffect(() => {
+    if (chapter === 2) {
+      torchAnimationRef.current = setInterval(() => {
+        setTorchFrame(prev => (prev + 1) % 3);
+      }, 1000); // Slow down animation from 500ms to 1000ms
+    }
+
+    return () => {
+      if (torchAnimationRef.current) {
+        clearInterval(torchAnimationRef.current);
+      }
+    };
+  }, [chapter]);
 
   return (
     <TouchableWithoutFeedback onPress={handleTouch}>
@@ -2024,29 +2600,35 @@ const GameWorld = () => {
           {/* Dark background for unexplored areas */}
           <View style={styles.unexploredBackground} />
           
-          {/* Render world border */}
-          {renderWorldBorder()}
+          {/* Add thunderstorm effects - only show outside factory */}
+          {!isInFactory && renderThunderstorm()}
+          
+          {/* Add lantern and light effect - only show outside factory */}
+          {!isInFactory && renderLantern()}
+          
+          {/* Render world border - only show outside factory */}
+          {!isInFactory && renderWorldBorder()}
           
           {/* Render all tiles - they will be filtered by renderTile */}
           {Object.keys(tiles).map(tileKey => renderTile(tileKey))}
           
-          {/* Render factory */}
-          {renderFactory()}
+          {/* Render factory - only show outside factory */}
+          {!isInFactory && renderFactory()}
           
-          {/* Render chicken companion */}
-          {renderChicken()}
+          {/* Render chicken companion - only show outside factory */}
+          {!isInFactory && renderChicken()}
           
-          {/* Render chicken circle group */}
-          {renderChickenCircle()}
+          {/* Render chicken circle group - only show outside factory */}
+          {!isInFactory && renderChickenCircle()}
           
-          {/* Render farmer */}
-          {renderFarmer()}
+          {/* Render farmer - only show outside factory */}
+          {!isInFactory && renderFarmer()}
           
-          {/* Render market building */}
-          {renderMarket()}
+          {/* Render market building - only show outside factory */}
+          {!isInFactory && renderMarket()}
           
-          {/* Render antagonist */}
-          {renderAntagonist()}
+          {/* Render antagonist - only show outside factory */}
+          {!isInFactory && renderAntagonist()}
           
           {/* Render player (only once) */}
           {renderPlayer()}
@@ -2054,33 +2636,39 @@ const GameWorld = () => {
         {/* Still call renderTapMarker() to maintain code structure */}
         {renderTapMarker()}
         
-        {/* Market room UI overlay */}
-        {renderMarketRoom()}
+        {/* Market room UI overlay - only show outside factory */}
+        {!isInFactory && renderMarketRoom()}
         
-        {/* Farmer dialogue */}
-        {renderFarmerDialogue()}
+        {/* Farmer dialogue - only show outside factory */}
+        {!isInFactory && renderFarmerDialogue()}
         
-        {/* Factory dialogue */}
-        {renderFactoryDialogue()}
+        {/* Factory dialogue - only show outside factory */}
+        {!isInFactory && renderFactoryDialogue()}
         
-        {/* Chicken dialogue */}
-        {renderChickenDialogue()}
+        {/* Chicken dialogue - only show outside factory */}
+        {!isInFactory && renderChickenDialogue()}
         
-        {/* Protagonist dialogue */}
-        {renderProtagonistDialogue()}
+        {/* Protagonist dialogue - only show outside factory */}
+        {!isInFactory && renderProtagonistDialogue()}
         
-        {/* Antagonist dialogue */}
-        {renderAntagonistDialogue()}
+        {/* Antagonist dialogue - only show outside factory */}
+        {!isInFactory && renderAntagonistDialogue()}
         
-        {/* Egg counter */}
-        {renderEggCounter()}
+        {/* Egg counter - only show outside factory */}
+        {!isInFactory && renderEggCounter()}
         {renderCoordinates()}
         
-        {/* Self dialogue */}
-        {renderSelfDialogue()}
+        {/* Self dialogue - only show outside factory */}
+        {!isInFactory && renderSelfDialogue()}
         
-        {/* Fade overlay and chapter text */}
-        {renderFadeAndChapter()}
+        {/* Fade overlay and chapter text - only show outside factory */}
+        {!isInFactory && renderFadeAndChapter()}
+        
+        {/* Add explore alert to the render list - only show outside factory */}
+        {!isInFactory && renderExploreAlert()}
+        
+        {/* Add newspaper dialogue to the render list - only show outside factory */}
+        {!isInFactory && renderNewspaperDialogue()}
       </View>
     </TouchableWithoutFeedback>
   );
@@ -2300,7 +2888,7 @@ const styles = StyleSheet.create({
     borderColor: '#FFD700'
   },
   marketRoomTitle: {
-    fontSize: 16, // Reduced from 20
+    fontSize: 16,
     fontWeight: 'bold',
     color: '#FFD700',
     textAlign: 'center',
@@ -2328,12 +2916,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     overflow: 'hidden'
   },
+  marketItemIconText: {
+    fontSize: 16,
+    fontFamily: 'PressStart2P-Regular'
+  },
   marketItemText: {
     flex: 1,
     color: 'white',
-    fontWeight: 'bold',
-    fontFamily: 'PressStart2P-Regular',
-    fontSize: 10 // Reduced from 12
+    fontSize: 12,
+    fontFamily: 'PressStart2P-Regular'
   },
   marketItemPrice: {
     padding: 5,
@@ -2343,9 +2934,8 @@ const styles = StyleSheet.create({
   },
   marketItemPriceText: {
     color: 'white',
-    fontWeight: 'bold',
-    fontFamily: 'PressStart2P-Regular',
-    fontSize: 10 // Reduced from 12
+    fontSize: 12,
+    fontFamily: 'PressStart2P-Regular'
   },
   marketCloseButton: {
     backgroundColor: '#D2B48C',
@@ -2356,9 +2946,8 @@ const styles = StyleSheet.create({
   },
   marketCloseText: {
     color: '#8B4513',
-    fontWeight: 'bold',
-    fontFamily: 'PressStart2P-Regular',
-    fontSize: 10 // Reduced from 12
+    fontSize: 12,
+    fontFamily: 'PressStart2P-Regular'
   },
   worldBorderContainer: {
     position: 'absolute',
@@ -2496,7 +3085,174 @@ const styles = StyleSheet.create({
     fontSize: 32,
     fontFamily: 'PressStart2P-Regular',
     textAlign: 'center'
-  }
+  },
+  exploreAlert: {
+    position: 'absolute',
+    top: '30%',
+    left: '12%',
+    transform: [{ translateX: -100 }, { translateY: -50 }],
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    padding: 10,
+    borderRadius: 5,
+    borderWidth: 2,
+    borderColor: '#FFD700',
+    zIndex: 100,
+    width: 300,
+    alignItems: 'center'
+  },
+  exploreAlertText: {
+    color: '#FFD700',
+    fontSize: 16,
+    fontFamily: 'PressStart2P-Regular',
+    textAlign: 'center'
+  },
+  thunderstormOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 1
+  },
+  rainContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 2,
+    overflow: 'hidden',
+    willChange: 'transform',
+    pointerEvents: 'none'
+  },
+  rainDrop: {
+    position: 'absolute',
+    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+    borderRadius: 1,
+    willChange: 'transform',
+    pointerEvents: 'none'
+  },
+  lantern: {
+    position: 'absolute',
+    width: 32,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 5,
+  },
+  lanternEmoji: {
+    fontSize: 24,
+  },
+  lanternLight: {
+    position: 'absolute',
+    borderRadius: 100,
+    zIndex: 1,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  newspaperContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100
+  },
+  newspaperContent: {
+    width: '90%',
+    height: '80%',
+    backgroundColor: '#f0e6d2', // Changed to a yellowed paper color
+    borderRadius: 5,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#8B4513', // Changed to a brown border
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.8,
+    shadowRadius: 4,
+    elevation: 5
+  },
+  newspaperHeader: {
+    borderBottomWidth: 2,
+    borderBottomColor: '#8B4513', // Changed to match border color
+    paddingBottom: 10,
+    marginBottom: 20
+  },
+  newspaperTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    fontFamily: 'PressStart2P-Regular', // Changed to game font
+    color: '#000'
+  },
+  newspaperDate: {
+    fontSize: 14,
+    textAlign: 'center',
+    fontFamily: 'PressStart2P-Regular', // Changed to game font
+    color: '#666',
+    marginTop: 5
+  },
+  newspaperBody: {
+    flex: 1,
+    padding: 10
+  },
+  newspaperHeadline: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    fontFamily: 'PressStart2P-Regular', // Changed to game font
+    color: '#000',
+    marginBottom: 20
+  },
+  newspaperText: {
+    fontSize: 18,
+    fontFamily: 'PressStart2P-Regular', // Changed to game font
+    color: '#000',
+    lineHeight: 24
+  },
+  newspaperButton: {
+    backgroundColor: '#8B4513', // Changed to match border color
+    padding: 10,
+    borderRadius: 5,
+    marginTop: 20,
+    alignSelf: 'center'
+  },
+  newspaperButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontFamily: 'PressStart2P-Regular', // Changed to game font
+    textAlign: 'center'
+  },
+  bloodSpatterContainer: {
+    position: 'absolute',
+    zIndex: 5,
+    backgroundColor: 'transparent'
+  },
+  bloodSpatter: {
+    position: 'absolute',
+    backgroundColor: '#8B0000',
+    opacity: 0.9,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 1,
+    elevation: 2
+  },
+  torchImage: {
+    width: 32,
+    height: 32,
+    resizeMode: 'contain'
+  },
+  dialogueButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 10
+  },
 });
 
 export default GameWorld; 
